@@ -27,12 +27,12 @@ export class SimEngine {
           const maxTransfer = Math.min(link.dailyRate, source.currentVolume);
           const actualTransfer = Math.min(maxTransfer, target.capacity - target.currentVolume);
 
-          if (actualTransfer > 0) {
+          if (day > 0 && actualTransfer > 0) {
             source.currentVolume -= actualTransfer;
             target.currentVolume += actualTransfer;
           }
 
-          linkFlows[link.id] = actualTransfer;
+          linkFlows[link.id] = (day === 0) ? 0 : actualTransfer;
 
           if (target.currentVolume >= target.capacity) {
             alerts.push(`Day ${day}: Node ${target.name} reached capacity!`);

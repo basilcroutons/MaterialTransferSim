@@ -6,6 +6,7 @@ export class CanvasViewModel {
   private links: TransferLink[];
   private frames: SimFrame[] = [];
   private currentFrameIndex: number = 0;
+  private isPlayback: boolean = false;
 
   constructor() {
     this.nodes = [
@@ -31,7 +32,19 @@ export class CanvasViewModel {
   public getLinks(): TransferLink[] { return this.links; }
   public getFrames(): SimFrame[] { return this.frames; }
   public getCurrentFrame(): SimFrame { return this.frames[this.currentFrameIndex] || this.frames[0]; }
+  
   public setFrameIndex(index: number): void {
-    if (index >= 0 && index < this.frames.length) this.currentFrameIndex = index;
+    if (index >= 0 && index < this.frames.length) {
+      this.currentFrameIndex = index;
+    }
   }
+
+  public setPlayback(val: boolean): void {
+    this.isPlayback = val;
+    if (val) {
+      this.recalculateSimulation();
+    }
+  }
+
+  public getPlayback(): boolean { return this.isPlayback; }
 }
