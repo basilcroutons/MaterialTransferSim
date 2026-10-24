@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { CanvasViewModel } from './viewmodel/CanvasViewModel';
 import { ContainerNode, TransferLink } from './models/types';
+import { OverflowMode } from './simulation/SimEngine';
 
 interface Point { x: number; y: number; }
 
@@ -15,6 +16,7 @@ export default function App() {
 
   const [isPlayback, setIsPlayback] = useState<boolean>(false);
   const [currentDay, setCurrentDay] = useState<number>(0);
+  const [overflowMode, setOverflowMode] = useState<OverflowMode>('strict');
   
   // CSV Export Modal State
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
@@ -31,7 +33,6 @@ export default function App() {
   const selectedLink = selectedLinkId ? links.find(l => l.id === selectedLinkId) : null;
   const singleSelectedNode = selectedNodeIds.length === 1 ? nodes.find(n => n.id === selectedNodeIds[0]) : null;
 
-  // Helper to draw clean directional arrowhead rotated according to segment angle
   const drawArrowHead = (
     ctx: CanvasRenderingContext2D,
     x: number,
@@ -61,7 +62,6 @@ export default function App() {
     ctx.restore();
   };
 
-  // Helper: compute edge intersection on container bounding box
   const getContainerPort = (node: ContainerNode, targetPt: Point): Point => {
     const w = 120;
     const h = 80;
@@ -82,7 +82,6 @@ export default function App() {
     };
   };
 
-  // Helper: compute distance from point to line segment
   const distToSegment = (p: Point, v: Point, w: Point): number => {
     const l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2;
     if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
@@ -91,7 +90,6 @@ export default function App() {
     return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
   };
 
-  // Calculate 3-segment orthogonal routing points for a link
   const getLinkRoute = (source: ContainerNode, target: ContainerNode): { points: Point[]; startPort: Point; endPort: Point } => {
     const w = 120;
     const h = 80;
@@ -106,7 +104,6 @@ export default function App() {
     let endPort: Point;
 
     if (dx >= dy) {
-      // Predominantly horizontal orientation
       const midX = (srcCenter.x + tgtCenter.x) / 2;
       startPort = getContainerPort(source, { x: midX, y: srcCenter.y });
       endPort = getContainerPort(target, { x: midX, y: tgtCenter.y });
@@ -117,7 +114,6 @@ export default function App() {
         endPort
       ];
     } else {
-      // Predominantly vertical orientation
       const midY = (srcCenter.y + tgtCenter.y) / 2;
       startPort = getContainerPort(source, { x: srcCenter.x, y: midY });
       endPort = getContainerPort(target, { x: tgtCenter.x, y: midY });
@@ -132,7 +128,6 @@ export default function App() {
     return { points, startPort, endPort };
   };
 
-  // Handle Canvas Rendering
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -148,7 +143,6 @@ export default function App() {
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Grid
     ctx.strokeStyle = '#1e293b';
     ctx.lineWidth = 1;
     const gridSize = 40;
@@ -159,7 +153,6 @@ export default function App() {
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
     }
 
-    // Render Links
     links.forEach(link => {
       const source = nodes.find(n => n.id === link.sourceId);
       const target = nodes.find(n => n.id === link.targetId);
@@ -182,7 +175,6 @@ export default function App() {
         ctx.setLineDash([]);
       }
 
-      // Draw wire route
       ctx.beginPath();
       ctx.moveTo(points[0].x, points[0].y);
       for (let i = 1; i < points.length; i++) {
@@ -191,10 +183,7 @@ export default function App() {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Draw direction arrows along first and last segments
       const arrowOffset = 20;
-
-      // First segment (leaving source)
       const p0 = points[0];
       const p1 = points[1];
       const angle0 = Math.atan2(p1.y - p0.y, p1.x - p0.x);
@@ -206,7 +195,6 @@ export default function App() {
         drawArrowHead(ctx, ax0, ay0, angle0, linkColor);
       }
 
-      // Last segment (entering target)
       const pEndPrev = points[points.length - 2];
       const pEnd = points[points.length - 1];
       const angleEnd = Math.atan2(pEnd.y - pEndPrev.y, pEnd.x - pEndPrev.x);
@@ -218,7 +206,6 @@ export default function App() {
         drawArrowHead(ctx, axEnd, ayEnd, angleEnd, linkColor);
       }
 
-      // Rate Badge at midpoint segment
       const midIdx = Math.floor(points.length / 2);
       const badgePt = {
         x: (points[midIdx - 1].x + points[midIdx].x) / 2,
@@ -239,13 +226,13 @@ export default function App() {
       ctx.fillText(`${link.dailyRate} m³/d (${sourceName}➔${targetName})`, badgePt.x, badgePt.y + 3);
     });
 
-    // Render Nodes (drawn on top of link exit ports)
     nodes.forEach(node => {
       const isSelected = selectedNodeIds.includes(node.id);
       const width = 120;
       const height = 80;
       const liveVol = isPlayback && currentFrame ? (currentFrame.nodeVolumes[node.id] ?? node.currentVolume) : node.currentVolume;
       const fillPct = Math.min(1, Math.max(0, liveVol / node.capacity));
+      const isOverfilled = liveVol > node.capacity;
 
       if (isSelected) {
         ctx.strokeStyle = '#38bdf8';
@@ -255,13 +242,12 @@ export default function App() {
 
       ctx.fillStyle = '#1e293b';
       ctx.fillRect(node.x, node.y, width, height);
-      ctx.strokeStyle = isSelected ? '#38bdf8' : '#334155';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = isOverfilled ? '#ef4444' : (isSelected ? '#38bdf8' : '#334155');
+      ctx.lineWidth = isOverfilled ? 2.5 : 2;
       ctx.strokeRect(node.x, node.y, width, height);
 
-      // Fill Bar
-      ctx.fillStyle = node.type === 'excavation' ? '#0d9488' : node.type === 'stockpile' ? '#b45309' : '#475569';
-      ctx.fillRect(node.x + 8, node.y + 55, (width - 16) * fillPct, 12);
+      ctx.fillStyle = isOverfilled ? '#ef4444' : (node.type === 'excavation' ? '#0d9488' : node.type === 'stockpile' ? '#b45309' : '#475569');
+      ctx.fillRect(node.x + 8, node.y + 55, (width - 16) * Math.min(1, fillPct), 12);
 
       ctx.strokeStyle = '#64748b';
       ctx.lineWidth = 1;
@@ -272,7 +258,7 @@ export default function App() {
       ctx.textAlign = 'left';
       ctx.fillText(node.name, node.x + 10, node.y + 22);
 
-      ctx.fillStyle = '#94a3b8';
+      ctx.fillStyle = isOverfilled ? '#fca5a5' : '#94a3b8';
       ctx.font = '9px system-ui, sans-serif';
       ctx.fillText(`Type: ${node.type}`, node.x + 10, node.y + 38);
       ctx.fillText(`Vol: ${Math.round(liveVol).toLocaleString()} m³`, node.x + 10, node.y + 50);
@@ -326,7 +312,6 @@ export default function App() {
 
       const { points } = getLinkRoute(source, target);
 
-      // Check distance to rate badge
       const midIdx = Math.floor(points.length / 2);
       const badgePt = {
         x: (points[midIdx - 1].x + points[midIdx].x) / 2,
@@ -336,7 +321,6 @@ export default function App() {
         return true;
       }
 
-      // Check proximity to any segment
       for (let i = 0; i < points.length - 1; i++) {
         if (distToSegment({ x: mouseX, y: mouseY }, points[i], points[i + 1]) < 8) {
           return true;
@@ -454,6 +438,12 @@ export default function App() {
     vm.setFrameIndex(day);
   };
 
+  const changeOverflowMode = (mode: OverflowMode) => {
+    setOverflowMode(mode);
+    vm.setOverflowMode(mode);
+    setNodes([...vm.getNodes()]);
+  };
+
   const updateSingleNode = (field: keyof ContainerNode, val: any) => {
     if (!singleSelectedNode || isPlayback) return;
     (singleSelectedNode as any)[field] = val;
@@ -468,8 +458,6 @@ export default function App() {
     setLinks([...vm.getLinks()]);
   };
 
-  // Robust Blob-based CSV Export with real newlines (
-)
   const confirmExportCSV = () => {
     const frames = vm.getFrames();
     const nodesList = vm.getNodes();
@@ -477,7 +465,6 @@ export default function App() {
 
     let csvRows: string[] = [];
 
-    // Section 1: Initial Model Nodes
     csvRows.push('# SECTION: INITIAL MODEL NODES');
     csvRows.push('NodeID,Name,Type,X,Y,Capacity,InitialVolume,MaterialType,PlantCount');
     nodesList.forEach(n => {
@@ -485,7 +472,6 @@ export default function App() {
     });
 
     csvRows.push('');
-    // Section 2: Initial Model Links
     csvRows.push('# SECTION: INITIAL MODEL LINKS');
     csvRows.push('LinkId,SourceId,TargetId,DailyRate,FleetCount');
     linksList.forEach(l => {
@@ -493,7 +479,6 @@ export default function App() {
     });
 
     csvRows.push('');
-    // Section 3: Simulation Timeline Telemetry
     csvRows.push('# SECTION: SIMULATION TIMELINE TELEMETRY');
     csvRows.push('Day,EntityType,EntityId,EntityName,Value,CapacityOrDailyRate,Alerts');
     frames.forEach(frame => {
@@ -528,11 +513,12 @@ export default function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: '#0f172a', fontFamily: 'system-ui, sans-serif' }}>
       
+      {/* Top Header */}
       <header style={{ height: '52px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '2px', color: '#22c55e' }}>E4D</span>
           <span style={{ height: '14px', width: '1px', backgroundColor: 'rgba(255, 255, 255, 0.2)' }} />
-          <span style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '1px', color: '#94a3b8', textTransform: 'uppercase' }}>Material Transfer Sim — Clean Blob CSV Export Fix</span>
+          <span style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '1px', color: '#94a3b8', textTransform: 'uppercase' }}>Material Transfer Sim — Rules & Constraints Engine</span>
         </div>
         <div>
           <button
@@ -554,12 +540,55 @@ export default function App() {
         </div>
       </header>
 
+      {/* Dedicated Constraint & Overfill Control Bar */}
+      <div style={{ height: '46px', backgroundColor: '#0f172a', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#94a3b8' }}>
+          <span style={{ fontWeight: 'bold', color: '#f8fafc' }}>⚙️ Capacity Constraints Mode:</span>
+          <span>{overflowMode === 'strict' ? 'Enforces maximum capacity limits (throttles flow when full).' : 'Allows uncapped stockpile overfilling with warning telemetry.'}</span>
+        </div>
+        
+        <div style={{ display: 'flex', gap: '6px', backgroundColor: '#1e293b', padding: '4px', borderRadius: '6px', border: '1px solid #334155' }}>
+          <button
+            onClick={() => changeOverflowMode('strict')}
+            style={{
+              backgroundColor: overflowMode === 'strict' ? '#0284c7' : 'transparent',
+              color: overflowMode === 'strict' ? '#fff' : '#94a3b8',
+              border: 'none',
+              padding: '5px 12px',
+              borderRadius: '4px',
+              fontSize: '11px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              transition: 'all 0.2s'
+            }}
+          >
+            🔒 Strict Capacity (Enforced)
+          </button>
+          <button
+            onClick={() => changeOverflowMode('overfill')}
+            style={{
+              backgroundColor: overflowMode === 'overfill' ? '#b45309' : 'transparent',
+              color: overflowMode === 'overfill' ? '#fde047' : '#94a3b8',
+              border: 'none',
+              padding: '5px 12px',
+              borderRadius: '4px',
+              fontSize: '11px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              transition: 'all 0.2s'
+            }}
+          >
+            ⚠️ Allow Overfill (Uncapped)
+          </button>
+        </div>
+      </div>
+
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         
         <div style={{ flex: 3, position: 'relative', height: '100%' }}>
           <div style={{ position: 'absolute', top: '16px', left: '20px', pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: '12px', zIndex: 10 }}>
             <span style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '1px', color: isPlayback ? '#eab308' : '#64748b', textTransform: 'uppercase' }}>
-              {isPlayback ? `[PLAYBACK ACTIVE — DAY ${currentDay} / 30 — EDITING LOCKED]` : 'Canvas Active (Blob CSV Export Fixed)'}
+              {isPlayback ? `[PLAYBACK ACTIVE — DAY ${currentDay} / 30 — ${overflowMode.toUpperCase()} MODE]` : 'Canvas Active'}
             </span>
           </div>
 
@@ -581,7 +610,6 @@ export default function App() {
                   fontWeight: 'bold',
                   cursor: canLink ? 'pointer' : 'not-allowed'
                 }}
-                title={selectedNodeIds.length === 2 ? "Create link from Node 1 to Node 2" : "Select exactly 2 containers to enable linking"}
               >
                 🔗 +Link (2 Selected)
               </button>
@@ -625,7 +653,6 @@ export default function App() {
                 <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#22c55e' }}>Day {currentDay} of 30</div>
               </div>
 
-              {/* CSV Export Button in RHS Panel */}
               <div style={{ backgroundColor: '#0f172a', padding: '14px', borderRadius: '6px', border: '1px solid #334155', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>SYSTEM DATA & MODEL EXPORT</div>
                 <button
@@ -709,7 +736,7 @@ export default function App() {
                     {selectedNodeIds.length} Containers Selected
                   </div>
                   <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: '1.4' }}>
-                    Multi-selection active. Properties are blanked out when multiple records are selected. You can drag them together as a group or click <strong>🔗 +Link</strong> when exactly 2 are selected.
+                    Multi-selection active. Properties are blanked out when multiple records are selected.
                   </div>
                 </div>
               )}
@@ -757,7 +784,7 @@ export default function App() {
               {!hasSelection && (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '250px', color: '#64748b', textAlign: 'center', fontSize: '12px', gap: '8px' }}>
                   <div>No entity selected</div>
-                  <div style={{ fontSize: '11px' }}>Click container nodes (Ctrl+click for multi-select) or transfer link badges to inspect and edit properties.</div>
+                  <div style={{ fontSize: '11px' }}>Click container nodes or transfer link badges to inspect and edit properties.</div>
                 </div>
               )}
             </>

@@ -1,5 +1,5 @@
 import { ContainerNode, TransferLink, SimFrame } from '../models/types';
-import { SimEngine } from '../simulation/SimEngine';
+import { SimEngine, OverflowMode } from '../simulation/SimEngine';
 
 export class CanvasViewModel {
   private nodes: ContainerNode[];
@@ -7,6 +7,7 @@ export class CanvasViewModel {
   private frames: SimFrame[] = [];
   private currentFrameIndex: number = 0;
   private isPlayback: boolean = false;
+  private overflowMode: OverflowMode = 'strict';
 
   constructor() {
     this.nodes = [
@@ -23,8 +24,17 @@ export class CanvasViewModel {
     this.recalculateSimulation();
   }
 
+  public setOverflowMode(mode: OverflowMode): void {
+    this.overflowMode = mode;
+    this.recalculateSimulation();
+  }
+
+  public getOverflowMode(): OverflowMode {
+    return this.overflowMode;
+  }
+
   public recalculateSimulation(): void {
-    const engine = new SimEngine(this.nodes, this.links, 30);
+    const engine = new SimEngine(this.nodes, this.links, 30, this.overflowMode);
     this.frames = engine.runSimulation();
   }
 
