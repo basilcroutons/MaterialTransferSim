@@ -36,6 +36,7 @@ export default function App() {
   const selectedLink = selectedLinkId ? links.find(l => l.id === selectedLinkId) : null;
   const singleSelectedNode = selectedNodeIds.length === 1 ? nodes.find(n => n.id === selectedNodeIds[0]) : null;
 
+  // Arrow head scaled to 1.5x original (length: 21, width: 15) with midpoint centered at (x, y)
   const drawArrowHead = (
     ctx: CanvasRenderingContext2D,
     x: number,
@@ -43,20 +44,23 @@ export default function App() {
     angle: number,
     color: string
   ) => {
-    const headLength = 14;
-    const headWidth = 10;
+    const headLength = 21;
+    const headWidth = 15;
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
 
+    // Shift backward by half the headLength so the midpoint of the arrow is centered at (0,0)
+    ctx.translate(-headLength / 2, 0);
+
     ctx.fillStyle = color;
     ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 1.75;
 
     ctx.beginPath();
     ctx.moveTo(0, 0);
     ctx.lineTo(-headLength, -headWidth / 2);
-    ctx.lineTo(-headLength + 3, 0);
+    ctx.lineTo(-headLength + 5, 0);
     ctx.lineTo(-headLength, headWidth / 2);
     ctx.closePath();
     ctx.fill();
@@ -64,6 +68,7 @@ export default function App() {
 
     ctx.restore();
   };
+
 
   const getContainerPort = (node: ContainerNode, targetPt: Point): Point => {
     const w = 120;
@@ -162,7 +167,7 @@ export default function App() {
       if (!source || !target) return;
 
       const isSelected = selectedLinkId === link.id;
-      const linkFlow = isPlayback ? (currentFrame?.linkFlows[link.id] || 0) : link.dailyRate;
+      const linkFlow = isPlayback ? (currentFrame?.linkFlows[link.id] ?? 0) : link.dailyRate;
       const isActive = isPlayback && linkFlow > 0;
 
       const { points } = getLinkRoute(source, target);
@@ -186,24 +191,27 @@ export default function App() {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      const arrowOffset = 20;
+// Start arrow offset (close to source container)
+      const startArrowOffset = 40;
       const p0 = points[0];
       const p1 = points[1];
       const angle0 = Math.atan2(p1.y - p0.y, p1.x - p0.x);
       const seg0Len = Math.hypot(p1.x - p0.x, p1.y - p0.y);
       if (seg0Len > 5) {
-        const dist = Math.min(arrowOffset, seg0Len / 2);
+        const dist = Math.min(startArrowOffset, seg0Len / 2);
         const ax0 = p0.x + Math.cos(angle0) * dist;
         const ay0 = p0.y + Math.sin(angle0) * dist;
         drawArrowHead(ctx, ax0, ay0, angle0, linkColor);
       }
 
+      // End arrow offset reduced to 16 (nearly touching target container)
+      const endArrowOffset = 0;
       const pEndPrev = points[points.length - 2];
       const pEnd = points[points.length - 1];
       const angleEnd = Math.atan2(pEnd.y - pEndPrev.y, pEnd.x - pEndPrev.x);
       const segEndLen = Math.hypot(pEnd.x - pEndPrev.x, pEnd.y - pEndPrev.x);
       if (segEndLen > 5) {
-        const dist = Math.min(arrowOffset, segEndLen / 2);
+        const dist = Math.min(endArrowOffset, segEndLen / 2);
         const axEnd = pEnd.x - Math.cos(angleEnd) * dist;
         const ayEnd = pEnd.y - Math.sin(angleEnd) * dist;
         drawArrowHead(ctx, axEnd, ayEnd, angleEnd, linkColor);
@@ -215,18 +223,19 @@ export default function App() {
         y: (points[midIdx - 1].y + points[midIdx].y) / 2
       };
 
+      // Badge showing strictly current transfer rate
+      const displayRateText = `${Math.round(linkFlow).toLocaleString()} m³/d`;
+
       ctx.fillStyle = isSelected ? '#0369a1' : '#1e293b';
-      ctx.fillRect(badgePt.x - 55, badgePt.y - 11, 110, 22);
+      ctx.fillRect(badgePt.x - 45, badgePt.y - 11, 90, 22);
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(badgePt.x - 55, badgePt.y - 11, 110, 22);
+      ctx.strokeRect(badgePt.x - 45, badgePt.y - 11, 90, 22);
 
       ctx.fillStyle = '#f8fafc';
-      ctx.font = 'bold 10px system-ui, sans-serif';
+      ctx.font = 'bold 11px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      const sourceName = source.name.length > 8 ? source.name.substring(0, 6) + '..' : source.name;
-      const targetName = target.name.length > 8 ? target.name.substring(0, 6) + '..' : target.name;
-      ctx.fillText(`${link.dailyRate} m³/d (${sourceName}➔${targetName})`, badgePt.x, badgePt.y + 3);
+      ctx.fillText(displayRateText, badgePt.x, badgePt.y + 4);
     });
 
     nodes.forEach(node => {
@@ -320,7 +329,7 @@ export default function App() {
         x: (points[midIdx - 1].x + points[midIdx].x) / 2,
         y: (points[midIdx - 1].y + points[midIdx].y) / 2
       };
-      if (mouseX >= badgePt.x - 55 && mouseX <= badgePt.x + 55 && mouseY >= badgePt.y - 11 && mouseY <= badgePt.y + 11) {
+      if (mouseX >= badgePt.x - 45 && mouseX <= badgePt.x + 45 && mouseY >= badgePt.y - 11 && mouseY <= badgePt.y + 11) {
         return true;
       }
 
@@ -461,7 +470,6 @@ export default function App() {
     setLinks([...vm.getLinks()]);
   };
 
-  // CSV Line Parser handling quotes
   const parseCSVLine = (text: string): string[] => {
     const result: string[] = [];
     let current = '';
@@ -481,7 +489,6 @@ export default function App() {
     return result.map(s => s.replace(/^"|"$/g, ''));
   };
 
-  // Import Model CSV Handler
   const handleImportCSVFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
