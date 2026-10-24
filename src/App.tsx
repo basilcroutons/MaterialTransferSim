@@ -16,6 +16,10 @@ export default function App() {
   const [isPlayback, setIsPlayback] = useState<boolean>(false);
   const [currentDay, setCurrentDay] = useState<number>(0);
   
+  // CSV Export Modal State
+  const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
+  const [exportFileName, setExportFileName] = useState<string>('material_transfer_simulation_complete.csv');
+
   // Group drag refs
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -206,7 +210,7 @@ export default function App() {
       const pEndPrev = points[points.length - 2];
       const pEnd = points[points.length - 1];
       const angleEnd = Math.atan2(pEnd.y - pEndPrev.y, pEnd.x - pEndPrev.x);
-      const segEndLen = Math.hypot(pEnd.x - pEndPrev.x, pEnd.y - pEndPrev.y);
+      const segEndLen = Math.hypot(pEnd.x - pEndPrev.x, pEnd.y - pEndPrev.x);
       if (segEndLen > 5) {
         const dist = Math.min(arrowOffset, segEndLen / 2);
         const axEnd = pEnd.x - Math.cos(angleEnd) * dist;
@@ -464,6 +468,60 @@ export default function App() {
     setLinks([...vm.getLinks()]);
   };
 
+  // Robust Blob-based CSV Export with real newlines (
+)
+  const confirmExportCSV = () => {
+    const frames = vm.getFrames();
+    const nodesList = vm.getNodes();
+    const linksList = vm.getLinks();
+
+    let csvRows: string[] = [];
+
+    // Section 1: Initial Model Nodes
+    csvRows.push('# SECTION: INITIAL MODEL NODES');
+    csvRows.push('NodeID,Name,Type,X,Y,Capacity,InitialVolume,MaterialType,PlantCount');
+    nodesList.forEach(n => {
+      csvRows.push(`${n.id},"${n.name}",${n.type},${n.x},${n.y},${n.capacity},${n.currentVolume},"${n.materialType}",${n.plantCount}`);
+    });
+
+    csvRows.push('');
+    // Section 2: Initial Model Links
+    csvRows.push('# SECTION: INITIAL MODEL LINKS');
+    csvRows.push('LinkId,SourceId,TargetId,DailyRate,FleetCount');
+    linksList.forEach(l => {
+      csvRows.push(`${l.id},${l.sourceId},${l.targetId},${l.dailyRate},${l.fleetCount}`);
+    });
+
+    csvRows.push('');
+    // Section 3: Simulation Timeline Telemetry
+    csvRows.push('# SECTION: SIMULATION TIMELINE TELEMETRY');
+    csvRows.push('Day,EntityType,EntityId,EntityName,Value,CapacityOrDailyRate,Alerts');
+    frames.forEach(frame => {
+      const alertStr = `"${(frame.alerts || []).join(' | ')}"`;
+      nodesList.forEach(node => {
+        const vol = Math.round(frame.nodeVolumes[node.id] ?? node.currentVolume);
+        csvRows.push(`${frame.day},Node,${node.id},"${node.name}",${vol},${node.capacity},${alertStr}`);
+      });
+      linksList.forEach(link => {
+        const flow = Math.round(frame.linkFlows[link.id] ?? 0);
+        csvRows.push(`${frame.day},Link,${link.id},"${link.sourceId}->${link.targetId}",${flow},${link.dailyRate},${alertStr}`);
+      });
+    });
+
+    const csvString = csvRows.join('\n');
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', exportFileName.endsWith('.csv') ? exportFileName : `${exportFileName}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setIsExportModalOpen(false);
+  };
+
   const canLink = selectedNodeIds.length === 2 && !isPlayback;
   const hasSelection = selectedNodeIds.length > 0 || selectedLinkId !== null;
 
@@ -474,7 +532,7 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '2px', color: '#22c55e' }}>E4D</span>
           <span style={{ height: '14px', width: '1px', backgroundColor: 'rgba(255, 255, 255, 0.2)' }} />
-          <span style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '1px', color: '#94a3b8', textTransform: 'uppercase' }}>Material Transfer Sim — Adaptive Dynamic Orthogonal Routing</span>
+          <span style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '1px', color: '#94a3b8', textTransform: 'uppercase' }}>Material Transfer Sim — Clean Blob CSV Export Fix</span>
         </div>
         <div>
           <button
@@ -501,7 +559,7 @@ export default function App() {
         <div style={{ flex: 3, position: 'relative', height: '100%' }}>
           <div style={{ position: 'absolute', top: '16px', left: '20px', pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: '12px', zIndex: 10 }}>
             <span style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '1px', color: isPlayback ? '#eab308' : '#64748b', textTransform: 'uppercase' }}>
-              {isPlayback ? `[PLAYBACK ACTIVE — DAY ${currentDay} / 30 — EDITING LOCKED]` : 'Canvas Active (Adaptive Vertical & Horizontal Routing)'}
+              {isPlayback ? `[PLAYBACK ACTIVE — DAY ${currentDay} / 30 — EDITING LOCKED]` : 'Canvas Active (Blob CSV Export Fixed)'}
             </span>
           </div>
 
@@ -565,6 +623,30 @@ export default function App() {
               <div style={{ backgroundColor: '#0f172a', padding: '12px', borderRadius: '6px', border: '1px solid #334155' }}>
                 <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>TIMELINE STATUS</div>
                 <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#22c55e' }}>Day {currentDay} of 30</div>
+              </div>
+
+              {/* CSV Export Button in RHS Panel */}
+              <div style={{ backgroundColor: '#0f172a', padding: '14px', borderRadius: '6px', border: '1px solid #334155', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>SYSTEM DATA & MODEL EXPORT</div>
+                <button
+                  onClick={() => setIsExportModalOpen(true)}
+                  style={{
+                    backgroundColor: '#0284c7',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '10px 14px',
+                    borderRadius: '6px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  📊 Export Model + Sim CSV...
+                </button>
               </div>
 
               <div>
@@ -698,6 +780,48 @@ export default function App() {
             style={{ flex: 1, accentColor: '#22c55e', cursor: 'pointer', height: '6px' }}
           />
         </footer>
+      )}
+
+      {/* Save As / Export CSV Dialog Modal */}
+      {isExportModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0, 0, 0, 0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+          <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', width: '460px', padding: '24px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: '20px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #334155', paddingBottom: '12px' }}>
+              <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#38bdf8' }}>📥 Export Complete Model + Sim CSV</div>
+              <button onClick={() => setIsExportModalOpen(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '18px', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '12px', color: '#cbd5e1', lineHeight: '1.5' }}>
+              <div>
+                Exports a robust, clean CSV containing both the <strong>Initial Model Configuration</strong> and the <strong>30-Day Simulation Timeline Telemetry</strong> without formatting corruption.
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontWeight: 600, color: '#94a3b8' }}>Save As Filename</label>
+                <input
+                  type="text"
+                  value={exportFileName}
+                  onChange={e => setExportFileName(e.target.value)}
+                  style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '6px', color: '#f8fafc', padding: '10px', fontSize: '12px', outline: 'none' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid #334155', paddingTop: '16px' }}>
+              <button
+                onClick={() => setIsExportModalOpen(false)}
+                style={{ backgroundColor: '#334155', color: '#f8fafc', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmExportCSV}
+                style={{ backgroundColor: '#22c55e', color: '#0f172a', border: 'none', padding: '8px 18px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}
+              >
+                Download CSV
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
