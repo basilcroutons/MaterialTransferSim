@@ -2,51 +2,36 @@ import { ContainerNode, TransferLink, SimFrame } from '../models/types';
 import { SimEngine } from '../simulation/SimEngine';
 
 export class CanvasViewModel {
-    private nodes: ContainerNode[];
-    private links: TransferLink[];
-    private frames: SimFrame[] = [];
-    private currentFrameIndex: number = 0;
+  private nodes: ContainerNode[];
+  private links: TransferLink[];
+  private frames: SimFrame[] = [];
+  private currentFrameIndex: number = 0;
 
-    constructor() {
-        // Default initial setup for MaterialTransferSim vertical slice
-        this.nodes = [
-            { id: 'node-1', label: 'Source Pit A', type: 'source', x: 150, y: 200, capacity: 10000, currentVolume: 8500 },
-            { id: 'node-2', label: 'Buffer Tank B', type: 'buffer', x: 450, y: 200, capacity: 5000, currentVolume: 1200 },
-            { id: 'node-3', label: 'Process Plant C', type: 'destination', x: 750, y: 200, capacity: 12000, currentVolume: 2000 },
-        ];
+  constructor() {
+    this.nodes = [
+      { id: 'node-1', name: 'Source Cut A', type: 'excavation', x: 140, y: 160, capacity: 50000, currentVolume: 42000, materialType: 'Type 1 Fill', plantCount: 4 },
+      { id: 'node-2', name: 'Buffer Stockpile B', type: 'stockpile', x: 440, y: 160, capacity: 30000, currentVolume: 12500, materialType: 'Type 1 Fill', plantCount: 2 },
+      { id: 'node-3', name: 'Processing Plant C', type: 'external', x: 740, y: 280, capacity: 100000, currentVolume: 55000, materialType: 'Crushed Aggregate', plantCount: 6 },
+    ];
 
-        this.links = [
-            { id: 'link-1', sourceNodeId: 'node-1', targetNodeId: 'node-2', maxCapacityRate: 500, currentFlowRate: 500 },
-            { id: 'link-2', sourceNodeId: 'node-2', targetNodeId: 'node-3', maxCapacityRate: 400, currentFlowRate: 400 },
-        ];
+    this.links = [
+      { id: 'link-1', sourceId: 'node-1', targetId: 'node-2', dailyRate: 1500, fleetCount: 5 },
+      { id: 'link-2', sourceId: 'node-2', targetId: 'node-3', dailyRate: 1200, fleetCount: 4 },
+    ];
 
-        this.recalculateSimulation();
-    }
+    this.recalculateSimulation();
+  }
 
-    public recalculateSimulation(): void {
-        const engine = new SimEngine(this.nodes, this.links, 30);
-        this.frames = engine.runSimulation();
-    }
+  public recalculateSimulation(): void {
+    const engine = new SimEngine(this.nodes, this.links, 30);
+    this.frames = engine.runSimulation();
+  }
 
-    public getNodes(): ContainerNode[] {
-        return this.nodes;
-    }
-
-    public getLinks(): TransferLink[] {
-        return this.links;
-    }
-
-    public getFrames(): SimFrame[] {
-        return this.frames;
-    }
-
-    public getCurrentFrame(): SimFrame {
-        return this.frames[this.currentFrameIndex] || this.frames[0];
-    }
-
-    public setFrameIndex(index: number): void {
-        if (index >= 0 && index < this.frames.length) {
-            this.currentFrameIndex = index;
-        }
-    }
+  public getNodes(): ContainerNode[] { return this.nodes; }
+  public getLinks(): TransferLink[] { return this.links; }
+  public getFrames(): SimFrame[] { return this.frames; }
+  public getCurrentFrame(): SimFrame { return this.frames[this.currentFrameIndex] || this.frames[0]; }
+  public setFrameIndex(index: number): void {
+    if (index >= 0 && index < this.frames.length) this.currentFrameIndex = index;
+  }
 }
