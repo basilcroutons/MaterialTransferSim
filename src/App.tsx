@@ -22,6 +22,9 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   const [exportFileName, setExportFileName] = useState<string>('material_transfer_simulation_complete.csv');
 
+  // Hidden file input ref for import
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Group drag refs
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -458,6 +461,100 @@ export default function App() {
     setLinks([...vm.getLinks()]);
   };
 
+  // CSV Line Parser handling quotes
+  const parseCSVLine = (text: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result.map(s => s.replace(/^"|"$/g, ''));
+  };
+
+  // Import Model CSV Handler
+  const handleImportCSVFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (!content) return;
+
+      const lines = content.split(/\r?\n/);
+      let section = '';
+      const importedNodes: ContainerNode[] = [];
+      const importedLinks: TransferLink[] = [];
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('# SECTION: INITIAL MODEL NODES')) {
+          section = 'NODES';
+          continue;
+        } else if (trimmed.startsWith('# SECTION: INITIAL MODEL LINKS')) {
+          section = 'LINKS';
+          continue;
+        } else if (trimmed.startsWith('# SECTION:') || trimmed.startsWith('#')) {
+          section = 'OTHER';
+          continue;
+        }
+
+        if (!trimmed || trimmed.startsWith('NodeID') || trimmed.startsWith('LinkId')) continue;
+
+        if (section === 'NODES') {
+          const parts = parseCSVLine(trimmed);
+          if (parts.length >= 9) {
+            importedNodes.push({
+              id: parts[0],
+              name: parts[1],
+              type: parts[2] as any,
+              x: Number(parts[3]),
+              y: Number(parts[4]),
+              capacity: Number(parts[5]),
+              currentVolume: Number(parts[6]),
+              materialType: parts[7],
+              plantCount: Number(parts[8])
+            });
+          }
+        } else if (section === 'LINKS') {
+          const parts = parseCSVLine(trimmed);
+          if (parts.length >= 5) {
+            importedLinks.push({
+              id: parts[0],
+              sourceId: parts[1],
+              targetId: parts[2],
+              dailyRate: Number(parts[3]),
+              fleetCount: Number(parts[4])
+            });
+          }
+        }
+      }
+
+      if (importedNodes.length > 0) {
+        vm.loadModel(importedNodes, importedLinks);
+        setNodes([...vm.getNodes()]);
+        setLinks([...vm.getLinks()]);
+        setSelectedNodeIds([]);
+        setSelectedLinkId(null);
+        alert(`Successfully imported model: ${importedNodes.length} nodes and ${importedLinks.length} links loaded into the live canvas!`);
+      } else {
+        alert('Could not find valid node data sections in the uploaded CSV.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const confirmExportCSV = () => {
     const frames = vm.getFrames();
     const nodesList = vm.getNodes();
@@ -513,6 +610,15 @@ export default function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: '#0f172a', fontFamily: 'system-ui, sans-serif' }}>
       
+      {/* Hidden file input for CSV import */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleImportCSVFile}
+        accept=".csv"
+        style={{ display: 'none' }}
+      />
+
       {/* Top Header */}
       <header style={{ height: '52px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -520,7 +626,27 @@ export default function App() {
           <span style={{ height: '14px', width: '1px', backgroundColor: 'rgba(255, 255, 255, 0.2)' }} />
           <span style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '1px', color: '#94a3b8', textTransform: 'uppercase' }}>Material Transfer Sim — Rules & Constraints Engine</span>
         </div>
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              backgroundColor: '#334155',
+              color: '#38bdf8',
+              border: '1px solid #475569',
+              padding: '7px 14px',
+              borderRadius: '6px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              fontSize: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+            title="Import Model CSV to repopulate the canvas and links"
+          >
+            <span>📂 Import Model CSV</span>
+          </button>
+
           <button
             onClick={togglePlayback}
             style={{

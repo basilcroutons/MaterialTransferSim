@@ -33,6 +33,13 @@ export class CanvasViewModel {
     return this.overflowMode;
   }
 
+  public loadModel(nodes: ContainerNode[], links: TransferLink[]): void {
+    this.nodes = nodes;
+    this.links = links;
+    this.currentFrameIndex = 0;
+    this.recalculateSimulation();
+  }
+
   public recalculateSimulation(): void {
     const engine = new SimEngine(this.nodes, this.links, 30, this.overflowMode);
     this.frames = engine.runSimulation();
