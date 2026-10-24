@@ -2,25 +2,131 @@ import React, { useState, useRef, useEffect } from 'react';
 import { CanvasViewModel } from './viewmodel/CanvasViewModel';
 import { ContainerNode, TransferLink } from './models/types';
 
+interface Point { x: number; y: number; }
+
 export default function App() {
   const [vm] = useState(() => new CanvasViewModel());
-  const [selectedEntity, setSelectedEntity] = useState<{ type: 'node' | 'link'; id: string } | null>({ type: 'node', id: 'node-1' });
+  const [nodes, setNodes] = useState<ContainerNode[]>(vm.getNodes());
+  const [links, setLinks] = useState<TransferLink[]>(vm.getLinks());
+  
+  // Selection state
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(['node-1']);
+  const [selectedLinkId, setSelectedLinkId] = useState<string | null>(null);
+
   const [isPlayback, setIsPlayback] = useState<boolean>(false);
   const [currentDay, setCurrentDay] = useState<number>(0);
-  const [isDraggingNode, setIsDraggingNode] = useState<string | null>(null);
-  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  const [, setForceTick] = useState(0);
-  const triggerRender = () => setForceTick(t => t + 1);
+  
+  // Group drag refs
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const nodeInitialPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  const nodes = vm.getNodes();
-  const links = vm.getLinks();
   const currentFrame = vm.getCurrentFrame();
 
-  const selectedNode = selectedEntity?.type === 'node' ? nodes.find(n => n.id === selectedEntity.id) : null;
-  const selectedLink = selectedEntity?.type === 'link' ? links.find(l => l.id === selectedEntity.id) : null;
+  const selectedLink = selectedLinkId ? links.find(l => l.id === selectedLinkId) : null;
+  const singleSelectedNode = selectedNodeIds.length === 1 ? nodes.find(n => n.id === selectedNodeIds[0]) : null;
+
+  // Helper to draw clean directional arrowhead rotated according to segment angle
+  const drawArrowHead = (
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    angle: number,
+    color: string
+  ) => {
+    const headLength = 14;
+    const headWidth = 10;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1.5;
+
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-headLength, -headWidth / 2);
+    ctx.lineTo(-headLength + 3, 0);
+    ctx.lineTo(-headLength, headWidth / 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.restore();
+  };
+
+  // Helper: compute edge intersection on container bounding box
+  const getContainerPort = (node: ContainerNode, targetPt: Point): Point => {
+    const w = 120;
+    const h = 80;
+    const cx = node.x + w / 2;
+    const cy = node.y + h / 2;
+    const dx = targetPt.x - cx;
+    const dy = targetPt.y - cy;
+
+    if (dx === 0 && dy === 0) return { x: cx, y: cy };
+
+    const scaleX = (w / 2) / Math.abs(dx || 0.0001);
+    const scaleY = (h / 2) / Math.abs(dy || 0.0001);
+    const scale = Math.min(scaleX, scaleY);
+
+    return {
+      x: cx + dx * scale,
+      y: cy + dy * scale
+    };
+  };
+
+  // Helper: compute distance from point to line segment
+  const distToSegment = (p: Point, v: Point, w: Point): number => {
+    const l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2;
+    if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
+    let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
+  };
+
+  // Calculate 3-segment orthogonal routing points for a link
+  const getLinkRoute = (source: ContainerNode, target: ContainerNode): { points: Point[]; startPort: Point; endPort: Point } => {
+    const w = 120;
+    const h = 80;
+    const srcCenter = { x: source.x + w / 2, y: source.y + h / 2 };
+    const tgtCenter = { x: target.x + w / 2, y: target.y + h / 2 };
+
+    const dx = Math.abs(tgtCenter.x - srcCenter.x);
+    const dy = Math.abs(tgtCenter.y - srcCenter.y);
+
+    let points: Point[] = [];
+    let startPort: Point;
+    let endPort: Point;
+
+    if (dx >= dy) {
+      // Predominantly horizontal orientation
+      const midX = (srcCenter.x + tgtCenter.x) / 2;
+      startPort = getContainerPort(source, { x: midX, y: srcCenter.y });
+      endPort = getContainerPort(target, { x: midX, y: tgtCenter.y });
+      points = [
+        startPort,
+        { x: midX, y: startPort.y },
+        { x: midX, y: endPort.y },
+        endPort
+      ];
+    } else {
+      // Predominantly vertical orientation
+      const midY = (srcCenter.y + tgtCenter.y) / 2;
+      startPort = getContainerPort(source, { x: srcCenter.x, y: midY });
+      endPort = getContainerPort(target, { x: tgtCenter.x, y: midY });
+      points = [
+        startPort,
+        { x: startPort.x, y: midY },
+        { x: endPort.x, y: midY },
+        endPort
+      ];
+    }
+
+    return { points, startPort, endPort };
+  };
 
   // Handle Canvas Rendering
   useEffect(() => {
@@ -49,51 +155,89 @@ export default function App() {
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
     }
 
-    // Links
+    // Render Links
     links.forEach(link => {
       const source = nodes.find(n => n.id === link.sourceId);
       const target = nodes.find(n => n.id === link.targetId);
       if (!source || !target) return;
 
-      const isSelected = selectedEntity?.type === 'link' && selectedEntity.id === link.id;
+      const isSelected = selectedLinkId === link.id;
       const linkFlow = isPlayback ? (currentFrame?.linkFlows[link.id] || 0) : link.dailyRate;
       const isActive = isPlayback && linkFlow > 0;
 
-      ctx.beginPath();
-      ctx.moveTo(source.x + 60, source.y + 40);
-      const midX = (source.x + target.x) / 2 + 60;
-      ctx.lineTo(midX, source.y + 40);
-      ctx.lineTo(midX, target.y + 40);
-      ctx.lineTo(target.x + 60, target.y + 40);
+      const { points } = getLinkRoute(source, target);
+      if (points.length < 2) return;
 
-      ctx.strokeStyle = isSelected ? '#38bdf8' : isActive ? '#22c55e' : '#0284c7';
-      ctx.lineWidth = isSelected ? 5 : isActive ? 4 : 3;
+      const linkColor = isSelected ? '#38bdf8' : isActive ? '#22c55e' : '#38bdf8';
+      ctx.strokeStyle = linkColor;
+      ctx.lineWidth = isSelected ? 4 : isActive ? 3.5 : 3;
+
       if (isActive) {
         ctx.setLineDash([6, 6]);
       } else {
         ctx.setLineDash([]);
       }
-      ctx.stroke();
-      ctx.setLineDash([]); // Reset
 
-      // Rate Badge
-      const badgeX = midX;
-      const badgeY = (source.y + target.y) / 2 + 35;
+      // Draw wire route
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw direction arrows along first and last segments
+      const arrowOffset = 20;
+
+      // First segment (leaving source)
+      const p0 = points[0];
+      const p1 = points[1];
+      const angle0 = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+      const seg0Len = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+      if (seg0Len > 5) {
+        const dist = Math.min(arrowOffset, seg0Len / 2);
+        const ax0 = p0.x + Math.cos(angle0) * dist;
+        const ay0 = p0.y + Math.sin(angle0) * dist;
+        drawArrowHead(ctx, ax0, ay0, angle0, linkColor);
+      }
+
+      // Last segment (entering target)
+      const pEndPrev = points[points.length - 2];
+      const pEnd = points[points.length - 1];
+      const angleEnd = Math.atan2(pEnd.y - pEndPrev.y, pEnd.x - pEndPrev.x);
+      const segEndLen = Math.hypot(pEnd.x - pEndPrev.x, pEnd.y - pEndPrev.y);
+      if (segEndLen > 5) {
+        const dist = Math.min(arrowOffset, segEndLen / 2);
+        const axEnd = pEnd.x - Math.cos(angleEnd) * dist;
+        const ayEnd = pEnd.y - Math.sin(angleEnd) * dist;
+        drawArrowHead(ctx, axEnd, ayEnd, angleEnd, linkColor);
+      }
+
+      // Rate Badge at midpoint segment
+      const midIdx = Math.floor(points.length / 2);
+      const badgePt = {
+        x: (points[midIdx - 1].x + points[midIdx].x) / 2,
+        y: (points[midIdx - 1].y + points[midIdx].y) / 2
+      };
+
       ctx.fillStyle = isSelected ? '#0369a1' : '#1e293b';
-      ctx.fillRect(badgeX - 50, badgeY - 10, 100, 22);
+      ctx.fillRect(badgePt.x - 55, badgePt.y - 11, 110, 22);
       ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(badgeX - 50, badgeY - 10, 100, 22);
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(badgePt.x - 55, badgePt.y - 11, 110, 22);
 
       ctx.fillStyle = '#f8fafc';
-      ctx.font = '10px system-ui, sans-serif';
+      ctx.font = 'bold 10px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(isPlayback ? `${linkFlow} m³/day` : `${link.dailyRate} m³/day`, badgeX, badgeY + 4);
+      const sourceName = source.name.length > 8 ? source.name.substring(0, 6) + '..' : source.name;
+      const targetName = target.name.length > 8 ? target.name.substring(0, 6) + '..' : target.name;
+      ctx.fillText(`${link.dailyRate} m³/d (${sourceName}➔${targetName})`, badgePt.x, badgePt.y + 3);
     });
 
-    // Nodes
+    // Render Nodes (drawn on top of link exit ports)
     nodes.forEach(node => {
-      const isSelected = selectedEntity?.type === 'node' && selectedEntity.id === node.id;
+      const isSelected = selectedNodeIds.includes(node.id);
       const width = 120;
       const height = 80;
       const liveVol = isPlayback && currentFrame ? (currentFrame.nodeVolumes[node.id] ?? node.currentVolume) : node.currentVolume;
@@ -129,10 +273,10 @@ export default function App() {
       ctx.fillText(`Type: ${node.type}`, node.x + 10, node.y + 38);
       ctx.fillText(`Vol: ${Math.round(liveVol).toLocaleString()} m³`, node.x + 10, node.y + 50);
     });
-  }, [nodes, links, selectedEntity, isPlayback, currentFrame]);
+  }, [nodes, links, selectedNodeIds, selectedLinkId, isPlayback, currentFrame]);
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (isPlayback) return; // Lock editing during playback
+    if (isPlayback) return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -145,9 +289,29 @@ export default function App() {
     );
 
     if (clickedNode) {
-      setSelectedEntity({ type: 'node', id: clickedNode.id });
-      setIsDraggingNode(clickedNode.id);
-      setDragOffset({ x: mouseX - clickedNode.x, y: mouseY - clickedNode.y });
+      const isCtrl = e.ctrlKey || e.metaKey;
+      let newSelectedNodeIds = [...selectedNodeIds];
+
+      if (isCtrl) {
+        if (newSelectedNodeIds.includes(clickedNode.id)) {
+          newSelectedNodeIds = newSelectedNodeIds.filter(id => id !== clickedNode.id);
+        } else {
+          newSelectedNodeIds.push(clickedNode.id);
+        }
+      } else {
+        if (!newSelectedNodeIds.includes(clickedNode.id)) {
+          newSelectedNodeIds = [clickedNode.id];
+        }
+      }
+
+      setSelectedNodeIds(newSelectedNodeIds);
+      setSelectedLinkId(null);
+
+      setIsDragging(true);
+      dragStartRef.current = { x: mouseX, y: mouseY };
+      const initialMap = new Map<string, { x: number; y: number }>();
+      nodes.forEach(n => initialMap.set(n.id, { x: n.x, y: n.y }));
+      nodeInitialPositionsRef.current = initialMap;
       return;
     }
 
@@ -155,37 +319,118 @@ export default function App() {
       const source = nodes.find(n => n.id === link.sourceId);
       const target = nodes.find(n => n.id === link.targetId);
       if (!source || !target) return false;
-      const midX = (source.x + target.x) / 2 + 60;
-      const badgeY = (source.y + target.y) / 2 + 35;
-      return mouseX >= midX - 50 && mouseX <= midX + 50 && mouseY >= badgeY - 10 && mouseY <= badgeY + 12;
+
+      const { points } = getLinkRoute(source, target);
+
+      // Check distance to rate badge
+      const midIdx = Math.floor(points.length / 2);
+      const badgePt = {
+        x: (points[midIdx - 1].x + points[midIdx].x) / 2,
+        y: (points[midIdx - 1].y + points[midIdx].y) / 2
+      };
+      if (mouseX >= badgePt.x - 55 && mouseX <= badgePt.x + 55 && mouseY >= badgePt.y - 11 && mouseY <= badgePt.y + 11) {
+        return true;
+      }
+
+      // Check proximity to any segment
+      for (let i = 0; i < points.length - 1; i++) {
+        if (distToSegment({ x: mouseX, y: mouseY }, points[i], points[i + 1]) < 8) {
+          return true;
+        }
+      }
+      return false;
     });
 
     if (clickedLink) {
-      setSelectedEntity({ type: 'link', id: clickedLink.id });
+      setSelectedLinkId(clickedLink.id);
+      setSelectedNodeIds([]);
       return;
     }
 
-    setSelectedEntity(null);
+    if (!e.ctrlKey && !e.metaKey) {
+      setSelectedNodeIds([]);
+      setSelectedLinkId(null);
+    }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDraggingNode || isPlayback) return;
+    if (!isDragging || isPlayback) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
+    const dx = mouseX - dragStartRef.current.x;
+    const dy = mouseY - dragStartRef.current.y;
+
     nodes.forEach(n => {
-      if (n.id === isDraggingNode) {
-        n.x = Math.round((mouseX - dragOffset.x) / 20) * 20;
-        n.y = Math.round((mouseY - dragOffset.y) / 20) * 20;
+      if (selectedNodeIds.includes(n.id)) {
+        const initial = nodeInitialPositionsRef.current.get(n.id);
+        if (initial) {
+          const newX = Math.round((initial.x + dx) / 20) * 20;
+          const newY = Math.round((initial.y + dy) / 20) * 20;
+          vm.updateNodePosition(n.id, newX, newY);
+        }
       }
     });
-    triggerRender();
+
+    setNodes([...vm.getNodes()]);
   };
 
-  const handleMouseUp = () => setIsDraggingNode(null);
+  const handleMouseUp = () => setIsDragging(false);
+
+  const handleAddNode = () => {
+    if (isPlayback) return;
+    const newId = `node-${Date.now()}`;
+    const newNode: ContainerNode = {
+      id: newId,
+      name: `Container ${nodes.length + 1}`,
+      type: 'stockpile',
+      x: 300,
+      y: 200,
+      capacity: 40000,
+      currentVolume: 10000,
+      materialType: 'Type 1 Fill',
+      plantCount: 3,
+    };
+    vm.addNode(newNode);
+    setNodes([...vm.getNodes()]);
+    setLinks([...vm.getLinks()]);
+    setSelectedNodeIds([newId]);
+    setSelectedLinkId(null);
+  };
+
+  const handleAddLinkBetweenSelected = () => {
+    if (isPlayback || selectedNodeIds.length !== 2) return;
+    const sourceId = selectedNodeIds[0];
+    const targetId = selectedNodeIds[1];
+
+    const newLink: TransferLink = {
+      id: `link-${Date.now()}`,
+      sourceId,
+      targetId,
+      dailyRate: 1000,
+      fleetCount: 3,
+    };
+    vm.addLink(newLink);
+    setLinks([...vm.getLinks()]);
+    setSelectedLinkId(newLink.id);
+    setSelectedNodeIds([]);
+  };
+
+  const handleDeleteSelected = () => {
+    if (isPlayback) return;
+    if (selectedLinkId) {
+      vm.removeLink(selectedLinkId);
+      setSelectedLinkId(null);
+    } else if (selectedNodeIds.length > 0) {
+      selectedNodeIds.forEach(id => vm.removeNode(id));
+      setSelectedNodeIds([]);
+    }
+    setNodes([...vm.getNodes()]);
+    setLinks([...vm.getLinks()]);
+  };
 
   const togglePlayback = () => {
     const nextState = !isPlayback;
@@ -194,41 +439,42 @@ export default function App() {
     if (nextState) {
       setCurrentDay(0);
       vm.setFrameIndex(0);
-      setSelectedEntity(null);
+      setSelectedNodeIds([]);
+      setSelectedLinkId(null);
     }
-    triggerRender();
   };
 
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const day = parseInt(e.target.value, 10);
     setCurrentDay(day);
     vm.setFrameIndex(day);
-    triggerRender();
   };
 
-  const updateNode = (field: keyof ContainerNode, val: any) => {
-    if (!selectedNode || isPlayback) return;
-    (selectedNode as any)[field] = val;
+  const updateSingleNode = (field: keyof ContainerNode, val: any) => {
+    if (!singleSelectedNode || isPlayback) return;
+    (singleSelectedNode as any)[field] = val;
     vm.recalculateSimulation();
-    triggerRender();
+    setNodes([...vm.getNodes()]);
   };
 
   const updateLink = (field: keyof TransferLink, val: any) => {
     if (!selectedLink || isPlayback) return;
     (selectedLink as any)[field] = val;
     vm.recalculateSimulation();
-    triggerRender();
+    setLinks([...vm.getLinks()]);
   };
+
+  const canLink = selectedNodeIds.length === 2 && !isPlayback;
+  const hasSelection = selectedNodeIds.length > 0 || selectedLinkId !== null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: '#0f172a', fontFamily: 'system-ui, sans-serif' }}>
       
-      {/* Top Header */}
       <header style={{ height: '52px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '2px', color: '#22c55e' }}>E4D</span>
           <span style={{ height: '14px', width: '1px', backgroundColor: 'rgba(255, 255, 255, 0.2)' }} />
-          <span style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '1px', color: '#94a3b8', textTransform: 'uppercase' }}>Material Transfer Sim — 3:1 Split & Simulation Playback</span>
+          <span style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '1px', color: '#94a3b8', textTransform: 'uppercase' }}>Material Transfer Sim — Adaptive Dynamic Orthogonal Routing</span>
         </div>
         <div>
           <button
@@ -250,27 +496,65 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Workspace (3:1 Split) */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         
-        {/* LEFT: 3/4 Canvas Area */}
         <div style={{ flex: 3, position: 'relative', height: '100%' }}>
           <div style={{ position: 'absolute', top: '16px', left: '20px', pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: '12px', zIndex: 10 }}>
             <span style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '1px', color: isPlayback ? '#eab308' : '#64748b', textTransform: 'uppercase' }}>
-              {isPlayback ? `[PLAYBACK ACTIVE — DAY ${currentDay} / 30 — EDITING LOCKED]` : 'Canvas Active (Interactive Editor)'}
+              {isPlayback ? `[PLAYBACK ACTIVE — DAY ${currentDay} / 30 — EDITING LOCKED]` : 'Canvas Active (Adaptive Vertical & Horizontal Routing)'}
             </span>
           </div>
+
+          {!isPlayback && (
+            <div style={{ position: 'absolute', top: '16px', right: '20px', display: 'flex', gap: '8px', zIndex: 20, backgroundColor: 'rgba(30, 41, 59, 0.9)', padding: '6px 10px', borderRadius: '8px', border: '1px solid #334155', backdropFilter: 'blur(4px)' }}>
+              <button onClick={handleAddNode} style={{ backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>
+                + Add Node
+              </button>
+              <button
+                onClick={handleAddLinkBetweenSelected}
+                disabled={!canLink}
+                style={{
+                  backgroundColor: canLink ? '#0d9488' : '#334155',
+                  color: canLink ? '#fff' : '#94a3b8',
+                  border: 'none',
+                  padding: '6px 10px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  fontWeight: 'bold',
+                  cursor: canLink ? 'pointer' : 'not-allowed'
+                }}
+                title={selectedNodeIds.length === 2 ? "Create link from Node 1 to Node 2" : "Select exactly 2 containers to enable linking"}
+              >
+                🔗 +Link (2 Selected)
+              </button>
+              <button
+                onClick={handleDeleteSelected}
+                disabled={!hasSelection}
+                style={{
+                  backgroundColor: hasSelection ? '#b91c1c' : '#334155',
+                  color: hasSelection ? '#fff' : '#94a3b8',
+                  border: 'none',
+                  padding: '6px 10px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  fontWeight: 'bold',
+                  cursor: hasSelection ? 'pointer' : 'not-allowed'
+                }}
+              >
+                🗑️ Delete
+              </button>
+            </div>
+          )}
 
           <canvas
             ref={canvasRef}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
-            style={{ display: 'block', width: '100%', height: '100%', cursor: isPlayback ? 'default' : (isDraggingNode ? 'grabbing' : 'default') }}
+            style={{ display: 'block', width: '100%', height: '100%', cursor: isPlayback ? 'default' : (isDragging ? 'grabbing' : 'default') }}
           />
         </div>
 
-        {/* RIGHT: 1/4 Property Inspector & Alerts Sidebar */}
         <div style={{ flex: 1, backgroundColor: '#1e293b', borderLeft: '1px solid #334155', display: 'flex', flexDirection: 'column', color: '#f8fafc', padding: '20px', boxSizing: 'border-box', overflowY: 'auto', minWidth: '300px' }}>
           <div style={{ fontSize: '14px', fontWeight: 700, letterSpacing: '1px', color: '#38bdf8', textTransform: 'uppercase', marginBottom: '16px', borderBottom: '1px solid #334155', paddingBottom: '10px' }}>
             {isPlayback ? `Simulation Telemetry (Day ${currentDay})` : 'Property Inspector'}
@@ -300,18 +584,18 @@ export default function App() {
             </div>
           ) : (
             <>
-              {selectedNode && (
+              {selectedNodeIds.length === 1 && singleSelectedNode && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                   <div style={{ fontSize: '12px', color: '#94a3b8', backgroundColor: '#0f172a', padding: '8px 12px', borderRadius: '4px' }}>
                     Selected: <strong style={{ color: '#38bdf8' }}>Container Node</strong>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Node Name</label>
-                    <input type="text" value={selectedNode.name} onChange={e => updateNode('name', e.target.value)} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
+                    <input type="text" value={singleSelectedNode.name} onChange={e => updateSingleNode('name', e.target.value)} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Container Type</label>
-                    <select value={selectedNode.type} onChange={e => updateNode('type', e.target.value as any)} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }}>
+                    <select value={singleSelectedNode.type} onChange={e => updateSingleNode('type', e.target.value as any)} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }}>
                       <option value="excavation">Excavation (Cut)</option>
                       <option value="stockpile">Stockpile (Fill)</option>
                       <option value="null">Null Junction</option>
@@ -320,19 +604,30 @@ export default function App() {
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Capacity (m³)</label>
-                    <input type="number" value={selectedNode.capacity} onChange={e => updateNode('capacity', Number(e.target.value))} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
+                    <input type="number" value={singleSelectedNode.capacity} onChange={e => updateSingleNode('capacity', Number(e.target.value))} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Current Volume (m³)</label>
-                    <input type="number" value={selectedNode.currentVolume} onChange={e => updateNode('currentVolume', Number(e.target.value))} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
+                    <input type="number" value={singleSelectedNode.currentVolume} onChange={e => updateSingleNode('currentVolume', Number(e.target.value))} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Assigned Material</label>
-                    <input type="text" value={selectedNode.materialType} onChange={e => updateNode('materialType', e.target.value)} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
+                    <input type="text" value={singleSelectedNode.materialType} onChange={e => updateSingleNode('materialType', e.target.value)} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Plant / Fleet Count</label>
-                    <input type="number" value={selectedNode.plantCount} onChange={e => updateNode('plantCount', Number(e.target.value))} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
+                    <input type="number" value={singleSelectedNode.plantCount} onChange={e => updateSingleNode('plantCount', Number(e.target.value))} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
+                  </div>
+                </div>
+              )}
+
+              {selectedNodeIds.length > 1 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', backgroundColor: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#38bdf8' }}>
+                    {selectedNodeIds.length} Containers Selected
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: '1.4' }}>
+                    Multi-selection active. Properties are blanked out when multiple records are selected. You can drag them together as a group or click <strong>🔗 +Link</strong> when exactly 2 are selected.
                   </div>
                 </div>
               )}
@@ -343,8 +638,28 @@ export default function App() {
                     Selected: <strong style={{ color: '#38bdf8' }}>Transfer Link</strong>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Source / Target</label>
-                    <input type="text" disabled value={`${selectedLink.sourceId} ➔ ${selectedLink.targetId}`} style={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '4px', color: '#64748b', padding: '8px', fontSize: '12px' }} />
+                    <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Source Container</label>
+                    <select
+                      value={selectedLink.sourceId}
+                      onChange={e => updateLink('sourceId', e.target.value)}
+                      style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }}
+                    >
+                      {nodes.map(n => (
+                        <option key={n.id} value={n.id}>{n.name} ({n.id})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Target Container</label>
+                    <select
+                      value={selectedLink.targetId}
+                      onChange={e => updateLink('targetId', e.target.value)}
+                      style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }}
+                    >
+                      {nodes.map(n => (
+                        <option key={n.id} value={n.id}>{n.name} ({n.id})</option>
+                      ))}
+                    </select>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Daily Rate (m³/day)</label>
@@ -357,10 +672,10 @@ export default function App() {
                 </div>
               )}
 
-              {!selectedNode && !selectedLink && (
+              {!hasSelection && (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '250px', color: '#64748b', textAlign: 'center', fontSize: '12px', gap: '8px' }}>
                   <div>No entity selected</div>
-                  <div style={{ fontSize: '11px' }}>Click any container node or transfer link badge on the canvas to inspect and edit its properties.</div>
+                  <div style={{ fontSize: '11px' }}>Click container nodes (Ctrl+click for multi-select) or transfer link badges to inspect and edit properties.</div>
                 </div>
               )}
             </>
@@ -368,7 +683,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Bottom Timeslider Footer (Visible in Playback Mode) */}
       {isPlayback && (
         <footer style={{ height: '64px', backgroundColor: '#1e293b', borderTop: '1px solid #334155', display: 'flex', alignItems: 'center', padding: '0 24px', gap: '20px', boxSizing: 'border-box' }}>
           <div style={{ display: 'flex', flexDirection: 'column', minWidth: '100px' }}>

@@ -47,4 +47,33 @@ export class CanvasViewModel {
   }
 
   public getPlayback(): boolean { return this.isPlayback; }
+
+  public addNode(node: ContainerNode): void {
+    this.nodes.push(node);
+    this.recalculateSimulation();
+  }
+
+  public removeNode(id: string): void {
+    this.nodes = this.nodes.filter(n => n.id !== id);
+    this.links = this.links.filter(l => l.sourceId !== id && l.targetId !== id);
+    this.recalculateSimulation();
+  }
+
+  public addLink(link: TransferLink): void {
+    this.links.push(link);
+    this.recalculateSimulation();
+  }
+
+  public removeLink(id: string): void {
+    this.links = this.links.filter(l => l.id !== id);
+    this.recalculateSimulation();
+  }
+
+  public updateNodePosition(id: string, x: number, y: number): void {
+    const node = this.nodes.find(n => n.id === id);
+    if (node) {
+      node.x = x;
+      node.y = y;
+    }
+  }
 }
