@@ -21,6 +21,10 @@ export default function App() {
   // Upward Material Drawer State in Property Inspector
   const [isMaterialDrawerOpen, setIsMaterialDrawerOpen] = useState<boolean>(false);
 
+  // CSV Export Modal State
+  const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
+  const [exportFileName, setExportFileName] = useState<string>('material_transfer_simulation_complete.csv');
+
   // Hidden file input ref for import
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -552,6 +556,55 @@ export default function App() {
     e.target.value = '';
   };
 
+  const confirmExportCSV = () => {
+    const frames = vm.getFrames();
+    const nodesList = vm.getNodes();
+    const linksList = vm.getLinks();
+
+    let csvRows: string[] = [];
+
+    csvRows.push('# SECTION: INITIAL MODEL NODES');
+    csvRows.push('NodeID,Name,Type,X,Y,Capacity,InitialVolume,MaterialType,PlantCount');
+    nodesList.forEach(n => {
+      csvRows.push(`${n.id},"${n.name}",${n.type},${n.x},${n.y},${n.capacity},${n.currentVolume},"${n.materialType}",${n.plantCount}`);
+    });
+
+    csvRows.push('');
+    csvRows.push('# SECTION: INITIAL MODEL LINKS');
+    csvRows.push('LinkId,SourceId,TargetId,DailyRate,FleetCount');
+    linksList.forEach(l => {
+      csvRows.push(`${l.id},${l.sourceId},${l.targetId},${l.dailyRate},${l.fleetCount}`);
+    });
+
+    csvRows.push('');
+    csvRows.push('# SECTION: SIMULATION TIMELINE TELEMETRY');
+    csvRows.push('Day,EntityType,EntityId,EntityName,Value,CapacityOrDailyRate,Alerts');
+    frames.forEach(frame => {
+      const alertStr = `"${(frame.alerts || []).join(' | ')}"`;
+      nodesList.forEach(node => {
+        const vol = Math.round(frame.nodeVolumes[node.id] ?? node.currentVolume);
+        csvRows.push(`${frame.day},Node,${node.id},"${node.name}",${vol},${node.capacity},${alertStr}`);
+      });
+      linksList.forEach(link => {
+        const flow = Math.round(frame.linkFlows[link.id] ?? 0);
+        csvRows.push(`${frame.day},Link,${link.id},"${link.sourceId}->${link.targetId}",${flow},${link.dailyRate},${alertStr}`);
+      });
+    });
+
+    const csvString = csvRows.join('\n');
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', exportFileName.endsWith('.csv') ? exportFileName : `${exportFileName}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setIsExportModalOpen(false);
+  };
+
   const canLink = selectedNodeIds.length === 2 && !isPlayback;
   const hasSelection = selectedNodeIds.length > 0 || selectedLinkId !== null;
 
@@ -820,6 +873,31 @@ export default function App() {
                 <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>TIMELINE STATUS</div>
                 <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#22c55e' }}>Day {currentDay} of 30</div>
               </div>
+
+              {/* CSV Export Button & Integration */}
+              <div style={{ backgroundColor: '#0f172a', padding: '14px', borderRadius: '6px', border: '1px solid #334155', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>SYSTEM DATA & MODEL EXPORT</div>
+                <button
+                  onClick={() => setIsExportModalOpen(true)}
+                  style={{
+                    backgroundColor: '#0284c7',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '10px 14px',
+                    borderRadius: '6px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  📊 Export Model + Sim CSV...
+                </button>
+              </div>
+
               <div>
                 <div style={{ fontSize: '12px', fontWeight: 700, color: '#eab308', marginBottom: '8px' }}>Active Alerts & Triggers</div>
                 {currentFrame && currentFrame.alerts.length > 0 ? (
@@ -1097,6 +1175,48 @@ export default function App() {
 
         </div>
       </div>
+
+      {/* Save As / Export CSV Dialog Modal */}
+      {isExportModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0, 0, 0, 0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
+          <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', width: '460px', padding: '24px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: '20px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #334155', paddingBottom: '12px' }}>
+              <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#38bdf8' }}>📥 Export Complete Model + Sim CSV</div>
+              <button onClick={() => setIsExportModalOpen(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '18px', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '12px', color: '#cbd5e1', lineHeight: '1.5' }}>
+              <div>
+                Exports a robust, clean CSV containing both the <strong>Initial Model Configuration</strong> and the <strong>30-Day Simulation Timeline Telemetry</strong>.
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontWeight: 600, color: '#94a3b8' }}>Save As Filename</label>
+                <input
+                  type="text"
+                  value={exportFileName}
+                  onChange={e => setExportFileName(e.target.value)}
+                  style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '6px', color: '#f8fafc', padding: '10px', fontSize: '12px', outline: 'none' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid #334155', paddingTop: '16px' }}>
+              <button
+                onClick={() => setIsExportModalOpen(false)}
+                style={{ backgroundColor: '#334155', color: '#f8fafc', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmExportCSV}
+                style={{ backgroundColor: '#22c55e', color: '#0f172a', border: 'none', padding: '8px 18px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}
+              >
+                Download CSV
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
