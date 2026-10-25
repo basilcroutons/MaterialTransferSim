@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { CanvasViewModel } from './viewmodel/CanvasViewModel';
-import { ContainerNode, TransferLink } from './models/types';
-import { OverflowMode } from './simulation/SimEngine';
+import { ContainerNode, TransferLink, OverflowMode, StrictSubRule } from './models/types';
 
 interface Point { x: number; y: number; }
 
@@ -16,7 +15,6 @@ export default function App() {
 
   const [isPlayback, setIsPlayback] = useState<boolean>(false);
   const [currentDay, setCurrentDay] = useState<number>(0);
-  const [overflowMode, setOverflowMode] = useState<OverflowMode>('strict');
   
   // CSV Export Modal State
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
@@ -36,7 +34,6 @@ export default function App() {
   const selectedLink = selectedLinkId ? links.find(l => l.id === selectedLinkId) : null;
   const singleSelectedNode = selectedNodeIds.length === 1 ? nodes.find(n => n.id === selectedNodeIds[0]) : null;
 
-  // Arrow head scaled to 1.5x original (length: 21, width: 15) with midpoint centered at (x, y)
   const drawArrowHead = (
     ctx: CanvasRenderingContext2D,
     x: number,
@@ -49,8 +46,6 @@ export default function App() {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
-
-    // Shift backward by half the headLength so the midpoint of the arrow is centered at (0,0)
     ctx.translate(-headLength / 2, 0);
 
     ctx.fillStyle = color;
@@ -68,7 +63,6 @@ export default function App() {
 
     ctx.restore();
   };
-
 
   const getContainerPort = (node: ContainerNode, targetPt: Point): Point => {
     const w = 120;
@@ -191,7 +185,6 @@ export default function App() {
       ctx.stroke();
       ctx.setLineDash([]);
 
-// Start arrow offset (close to source container)
       const startArrowOffset = 40;
       const p0 = points[0];
       const p1 = points[1];
@@ -204,7 +197,6 @@ export default function App() {
         drawArrowHead(ctx, ax0, ay0, angle0, linkColor);
       }
 
-      // End arrow offset reduced to 16 (nearly touching target container)
       const endArrowOffset = 0;
       const pEndPrev = points[points.length - 2];
       const pEnd = points[points.length - 1];
@@ -223,7 +215,6 @@ export default function App() {
         y: (points[midIdx - 1].y + points[midIdx].y) / 2
       };
 
-      // Badge showing strictly current transfer rate
       const displayRateText = `${Math.round(linkFlow).toLocaleString()} m³/d`;
 
       ctx.fillStyle = isSelected ? '#0369a1' : '#1e293b';
@@ -393,6 +384,8 @@ export default function App() {
       currentVolume: 10000,
       materialType: 'Type 1 Fill',
       plantCount: 3,
+      overflowMode: 'strict',
+      strictSubRule: 'throttleback'
     };
     vm.addNode(newNode);
     setNodes([...vm.getNodes()]);
@@ -448,12 +441,6 @@ export default function App() {
     const day = parseInt(e.target.value, 10);
     setCurrentDay(day);
     vm.setFrameIndex(day);
-  };
-
-  const changeOverflowMode = (mode: OverflowMode) => {
-    setOverflowMode(mode);
-    vm.setOverflowMode(mode);
-    setNodes([...vm.getNodes()]);
   };
 
   const updateSingleNode = (field: keyof ContainerNode, val: any) => {
@@ -530,7 +517,9 @@ export default function App() {
               capacity: Number(parts[5]),
               currentVolume: Number(parts[6]),
               materialType: parts[7],
-              plantCount: Number(parts[8])
+              plantCount: Number(parts[8]),
+              overflowMode: 'strict',
+              strictSubRule: 'throttleback'
             });
           }
         } else if (section === 'LINKS') {
@@ -617,7 +606,6 @@ export default function App() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: '#0f172a', fontFamily: 'system-ui, sans-serif' }}>
       
-      {/* Hidden file input for CSV import */}
       <input
         type="file"
         ref={fileInputRef}
@@ -631,7 +619,7 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '2px', color: '#22c55e' }}>E4D</span>
           <span style={{ height: '14px', width: '1px', backgroundColor: 'rgba(255, 255, 255, 0.2)' }} />
-          <span style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '1px', color: '#94a3b8', textTransform: 'uppercase' }}>Material Transfer Sim — Rules & Constraints Engine</span>
+          <span style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '1px', color: '#94a3b8', textTransform: 'uppercase' }}>Material Transfer Sim — Phase 2f Rules Engine</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button
@@ -673,45 +661,67 @@ export default function App() {
         </div>
       </header>
 
-      {/* Dedicated Constraint & Overfill Control Bar */}
+      {/* Batch Preset Control Bar */}
       <div style={{ height: '46px', backgroundColor: '#0f172a', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#94a3b8' }}>
-          <span style={{ fontWeight: 'bold', color: '#f8fafc' }}>⚙️ Capacity Constraints Mode:</span>
-          <span>{overflowMode === 'strict' ? 'Enforces maximum capacity limits (throttles flow when full).' : 'Allows uncapped stockpile overfilling with warning telemetry.'}</span>
+          <span style={{ fontWeight: 'bold', color: '#f8fafc' }}>⚙️ Quick Batch Presets:</span>
+          <span>Apply rule defaults across all container nodes simultaneously. (Individual nodes remain customizable in Property Inspector).</span>
         </div>
         
         <div style={{ display: 'flex', gap: '6px', backgroundColor: '#1e293b', padding: '4px', borderRadius: '6px', border: '1px solid #334155' }}>
           <button
-            onClick={() => changeOverflowMode('strict')}
+            onClick={() => {
+              vm.applyGlobalPreset('strict', 'throttleback');
+              setNodes([...vm.getNodes()]);
+            }}
             style={{
-              backgroundColor: overflowMode === 'strict' ? '#0284c7' : 'transparent',
-              color: overflowMode === 'strict' ? '#fff' : '#94a3b8',
+              backgroundColor: '#0284c7',
+              color: '#fff',
               border: 'none',
               padding: '5px 12px',
               borderRadius: '4px',
               fontSize: '11px',
               fontWeight: 'bold',
-              cursor: 'pointer',
-              transition: 'all 0.2s'
+              cursor: 'pointer'
             }}
           >
-            🔒 Strict Capacity (Enforced)
+            🔒 All Strict (Throttleback)
           </button>
           <button
-            onClick={() => changeOverflowMode('overfill')}
+            onClick={() => {
+              vm.applyGlobalPreset('strict', 'headroom_hold');
+              setNodes([...vm.getNodes()]);
+            }}
             style={{
-              backgroundColor: overflowMode === 'overfill' ? '#b45309' : 'transparent',
-              color: overflowMode === 'overfill' ? '#fde047' : '#94a3b8',
+              backgroundColor: '#0d9488',
+              color: '#fff',
               border: 'none',
               padding: '5px 12px',
               borderRadius: '4px',
               fontSize: '11px',
               fontWeight: 'bold',
-              cursor: 'pointer',
-              transition: 'all 0.2s'
+              cursor: 'pointer'
             }}
           >
-            ⚠️ Allow Overfill (Uncapped)
+            ⏱️ All Strict (Headroom Hold)
+          </button>
+          <button
+            onClick={() => {
+              vm.applyGlobalPreset('overfill');
+              setNodes([...vm.getNodes()]);
+            }}
+            style={{
+              backgroundColor: '#b45309',
+              color: '#fde047',
+              border: 'none',
+              padding: '5px 12px',
+              borderRadius: '4px',
+              fontSize: '11px',
+              fontWeight: 'bold',
+              cursor: 'pointer'
+            }}
+          >
+            ⚠️ All Overfill
           </button>
         </div>
       </div>
@@ -721,7 +731,7 @@ export default function App() {
         <div style={{ flex: 3, position: 'relative', height: '100%' }}>
           <div style={{ position: 'absolute', top: '16px', left: '20px', pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: '12px', zIndex: 10 }}>
             <span style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '1px', color: isPlayback ? '#eab308' : '#64748b', textTransform: 'uppercase' }}>
-              {isPlayback ? `[PLAYBACK ACTIVE — DAY ${currentDay} / 30 — ${overflowMode.toUpperCase()} MODE]` : 'Canvas Active'}
+              {isPlayback ? `[PLAYBACK ACTIVE — DAY ${currentDay} / 30]` : 'Canvas Active'}
             </span>
           </div>
 
@@ -774,6 +784,7 @@ export default function App() {
           />
         </div>
 
+        {/* Right 1/4: RHS Property Inspector Pane */}
         <div style={{ flex: 1, backgroundColor: '#1e293b', borderLeft: '1px solid #334155', display: 'flex', flexDirection: 'column', color: '#f8fafc', padding: '20px', boxSizing: 'border-box', overflowY: 'auto', minWidth: '300px' }}>
           <div style={{ fontSize: '14px', fontWeight: 700, letterSpacing: '1px', color: '#38bdf8', textTransform: 'uppercase', marginBottom: '16px', borderBottom: '1px solid #334155', paddingBottom: '10px' }}>
             {isPlayback ? `Simulation Telemetry (Day ${currentDay})` : 'Property Inspector'}
@@ -859,6 +870,51 @@ export default function App() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Plant / Fleet Count</label>
                     <input type="number" value={singleSelectedNode.plantCount} onChange={e => updateSingleNode('plantCount', Number(e.target.value))} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
+                  </div>
+
+                  {/* Phase 2f Strict Mode Sub-Rules Panel */}
+                  <div style={{ backgroundColor: '#0f172a', padding: '12px', borderRadius: '6px', border: '1px solid #334155', marginTop: '6px' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#38bdf8', marginBottom: '8px' }}>Phase 2f: Strict Rules Controls</div>
+                    
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
+                      <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Node Overflow Mode</label>
+                      <select
+                        value={singleSelectedNode.overflowMode || 'strict'}
+                        onChange={e => updateSingleNode('overflowMode', e.target.value as OverflowMode)}
+                        style={{ backgroundColor: '#1e293b', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '6px', fontSize: '11px' }}
+                      >
+                        <option value="strict">Strict Capacity (Enforced)</option>
+                        <option value="overfill">Allow Overfill (Uncapped)</option>
+                      </select>
+                    </div>
+
+                    {singleSelectedNode.overflowMode !== 'overfill' && (
+                      <>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
+                          <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Strict Sub-Rule</label>
+                          <select
+                            value={singleSelectedNode.strictSubRule || 'throttleback'}
+                            onChange={e => updateSingleNode('strictSubRule', e.target.value as StrictSubRule)}
+                            style={{ backgroundColor: '#1e293b', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '6px', fontSize: '11px' }}
+                          >
+                            <option value="throttleback">Proportional Throttleback</option>
+                            <option value="headroom_hold">Headroom Hold (X Spare Space)</option>
+                          </select>
+                        </div>
+
+                        {singleSelectedNode.strictSubRule === 'headroom_hold' && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Required Spare Space (m³)</label>
+                            <input
+                              type="number"
+                              value={singleSelectedNode.headroomThreshold ?? 500}
+                              onChange={e => updateSingleNode('headroomThreshold', Number(e.target.value))}
+                              style={{ backgroundColor: '#1e293b', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '6px', fontSize: '11px' }}
+                            />
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               )}

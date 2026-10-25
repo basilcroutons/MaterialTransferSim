@@ -1,5 +1,5 @@
 import { ContainerNode, TransferLink, SimFrame } from '../models/types';
-import { SimEngine, OverflowMode } from '../simulation/SimEngine';
+import { SimEngine, OverflowMode, StrictSubRule } from '../simulation/SimEngine';
 
 export class CanvasViewModel {
   private nodes: ContainerNode[];
@@ -11,9 +11,9 @@ export class CanvasViewModel {
 
   constructor() {
     this.nodes = [
-      { id: 'node-1', name: 'Source Cut A', type: 'excavation', x: 140, y: 160, capacity: 50000, currentVolume: 42000, materialType: 'Type 1 Fill', plantCount: 4 },
-      { id: 'node-2', name: 'Buffer Stockpile B', type: 'stockpile', x: 440, y: 160, capacity: 30000, currentVolume: 12500, materialType: 'Type 1 Fill', plantCount: 2 },
-      { id: 'node-3', name: 'Processing Plant C', type: 'external', x: 740, y: 280, capacity: 100000, currentVolume: 55000, materialType: 'Crushed Aggregate', plantCount: 6 },
+      { id: 'node-1', name: 'Source Cut A', type: 'excavation', x: 140, y: 160, capacity: 50000, currentVolume: 42000, materialType: 'Type 1 Fill', plantCount: 4, overflowMode: 'strict', strictSubRule: 'throttleback' },
+      { id: 'node-2', name: 'Buffer Stockpile B', type: 'stockpile', x: 440, y: 160, capacity: 30000, currentVolume: 12500, materialType: 'Type 1 Fill', plantCount: 2, overflowMode: 'strict', strictSubRule: 'throttleback', headroomThreshold: 500 },
+      { id: 'node-3', name: 'Processing Plant C', type: 'external', x: 740, y: 280, capacity: 100000, currentVolume: 55000, materialType: 'Crushed Aggregate', plantCount: 6, overflowMode: 'strict' },
     ];
 
     this.links = [
@@ -31,6 +31,14 @@ export class CanvasViewModel {
 
   public getOverflowMode(): OverflowMode {
     return this.overflowMode;
+  }
+
+  public applyGlobalPreset(mode: OverflowMode, subRule: StrictSubRule = 'throttleback'): void {
+    this.nodes.forEach(node => {
+      node.overflowMode = mode;
+      node.strictSubRule = subRule;
+    });
+    this.recalculateSimulation();
   }
 
   public loadModel(nodes: ContainerNode[], links: TransferLink[]): void {

@@ -1,4 +1,7 @@
 export type ContainerType = 'excavation' | 'stockpile' | 'null' | 'external';
+export type OverflowMode = 'strict' | 'overfill';
+export type StrictSubRule = 'throttleback' | 'headroom_hold';
+export type NodeStatus = 'active' | 'maintenance' | 'blocked';
 
 export interface ContainerNode {
   id: string;
@@ -10,6 +13,12 @@ export interface ContainerNode {
   currentVolume: number;
   materialType: string;
   plantCount: number;
+  // Phase 2f Additions
+  overflowMode?: OverflowMode;
+  strictSubRule?: StrictSubRule;
+  headroomThreshold?: number; // e.g. 500 m³ spare space required to resume after headroom hold
+  status?: NodeStatus;
+  allowedMaterials?: string[];
 }
 
 export interface TransferLink {
@@ -19,6 +28,9 @@ export interface TransferLink {
   dailyRate: number;
   fleetCount: number;
   materialId?: string;
+  // Phase 2f Additions
+  priority?: number;
+  rateSchedule?: { day: number; rate: number }[];
 }
 
 export interface SimFrame {
