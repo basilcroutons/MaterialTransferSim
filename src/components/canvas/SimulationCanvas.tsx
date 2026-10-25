@@ -20,6 +20,7 @@ interface SimulationCanvasProps {
   onDeleteSelected: () => void;
   canLink: boolean;
   hasSelection: boolean;
+  isGraphExpanded: boolean;
 }
 
 export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
@@ -121,133 +122,151 @@ export const SimulationCanvas: React.FC<SimulationCanvasProps> = ({
     return { points, startPort, endPort };
   };
 
-  useEffect(() => {
+useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const parent = canvas.parentElement;
-    if (parent) {
+    if (!parent) return;
+
+    const render = () => {
+      // 1. Recalculate canvas buffer dimensions from parent container instantly
       canvas.width = parent.clientWidth;
       canvas.height = parent.clientHeight;
-    }
 
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // 2. Draw background grid
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    ctx.strokeStyle = '#1e293b';
-    ctx.lineWidth = 1;
-    const gridSize = 40;
-    for (let x = 0; x < canvas.width; x += gridSize) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-    }
-    for (let y = 0; y < canvas.height; y += gridSize) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-    }
-
-    links.forEach(link => {
-      const source = nodes.find(n => n.id === link.sourceId);
-      const target = nodes.find(n => n.id === link.targetId);
-      if (!source || !target) return;
-
-      const isSelected = selectedLinkId === link.id;
-      const linkFlow = isPlayback ? (currentFrame?.linkFlows[link.id] ?? 0) : link.dailyRate;
-      const isActive = isPlayback && linkFlow > 0;
-
-      const { points } = getLinkRoute(source, target);
-      if (points.length < 2) return;
-
-      const linkColor = isSelected ? '#38bdf8' : isActive ? '#22c55e' : '#38bdf8';
-      ctx.strokeStyle = linkColor;
-      ctx.lineWidth = isSelected ? 4 : isActive ? 3.5 : 3;
-      ctx.setLineDash([]);
-
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, points[0].y);
-      for (let i = 1; i < points.length; i++) {
-        ctx.lineTo(points[i].x, points[i].y);
-      }
-      ctx.stroke();
-
-      const startArrowOffset = 40;
-      const p0 = points[0];
-      const p1 = points[1];
-      const angle0 = Math.atan2(p1.y - p0.y, p1.x - p0.x);
-      const seg0Len = Math.hypot(p1.x - p0.x, p1.y - p0.y);
-      if (seg0Len > 5) {
-        const dist = Math.min(startArrowOffset, seg0Len / 2);
-        drawArrowHead(ctx, p0.x + Math.cos(angle0) * dist, p0.y + Math.sin(angle0) * dist, angle0, linkColor);
-      }
-
-      const endArrowOffset = 16;
-      const pEndPrev = points[points.length - 2];
-      const pEnd = points[points.length - 1];
-      const angleEnd = Math.atan2(pEnd.y - pEndPrev.y, pEnd.x - pEndPrev.x);
-      const segEndLen = Math.hypot(pEnd.x - pEndPrev.x, pEnd.y - pEndPrev.y);
-      if (segEndLen > 5) {
-        const dist = Math.min(endArrowOffset, segEndLen / 2);
-        drawArrowHead(ctx, pEnd.x - Math.cos(angleEnd) * dist, pEnd.y - Math.sin(angleEnd) * dist, angleEnd, linkColor);
-      }
-
-      const midIdx = Math.floor(points.length / 2);
-      const badgePt = {
-        x: (points[midIdx - 1].x + points[midIdx].x) / 2,
-        y: (points[midIdx - 1].y + points[midIdx].y) / 2
-      };
-
-      const displayRateText = `${Math.round(linkFlow).toLocaleString()} m³/d`;
-      ctx.fillStyle = isSelected ? '#0369a1' : '#1e293b';
-      ctx.fillRect(badgePt.x - 45, badgePt.y - 11, 90, 22);
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(badgePt.x - 45, badgePt.y - 11, 90, 22);
-
-      ctx.fillStyle = '#f8fafc';
-      ctx.font = 'bold 11px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(displayRateText, badgePt.x, badgePt.y + 4);
-    });
-
-    nodes.forEach(node => {
-      const isSelected = selectedNodeIds.includes(node.id);
-      const width = 120;
-      const height = 80;
-      const liveVol = isPlayback && currentFrame ? (currentFrame.nodeVolumes[node.id] ?? node.currentVolume) : node.currentVolume;
-      const fillPct = Math.min(1, Math.max(0, liveVol / node.capacity));
-      const isOverfilled = liveVol > node.capacity;
-
-      if (isSelected) {
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(node.x - 4, node.y - 4, width + 8, height + 8);
-      }
-
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(node.x, node.y, width, height);
-      ctx.strokeStyle = isOverfilled ? '#ef4444' : (isSelected ? '#38bdf8' : '#334155');
-      ctx.lineWidth = isOverfilled ? 2.5 : 2;
-      ctx.strokeRect(node.x, node.y, width, height);
-
-      ctx.fillStyle = isOverfilled ? '#ef4444' : (node.type === 'excavation' ? '#0d9488' : node.type === 'stockpile' ? '#b45309' : '#475569');
-      ctx.fillRect(node.x + 8, node.y + 55, (width - 16) * Math.min(1, fillPct), 12);
-
-      ctx.strokeStyle = '#64748b';
+      ctx.strokeStyle = '#1e293b';
       ctx.lineWidth = 1;
-      ctx.strokeRect(node.x + 8, node.y + 55, width - 16, 12);
+      const gridSize = 40;
+      for (let x = 0; x < canvas.width; x += gridSize) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+      }
+      for (let y = 0; y < canvas.height; y += gridSize) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+      }
 
-      ctx.fillStyle = '#f8fafc';
-      ctx.font = 'bold 11px system-ui, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText(node.name, node.x + 10, node.y + 22);
+      // 3. Draw Links
+      links.forEach(link => {
+        const source = nodes.find(n => n.id === link.sourceId);
+        const target = nodes.find(n => n.id === link.targetId);
+        if (!source || !target) return;
 
-      ctx.fillStyle = isOverfilled ? '#fca5a5' : '#94a3b8';
-      ctx.font = '9px system-ui, sans-serif';
-      ctx.fillText(`Mat: ${node.materialType}`, node.x + 10, node.y + 38);
-      ctx.fillText(`Vol: ${Math.round(liveVol).toLocaleString()} m³`, node.x + 10, node.y + 50);
+        const isSelected = selectedLinkId === link.id;
+        const linkFlow = isPlayback ? (currentFrame?.linkFlows[link.id] ?? 0) : link.dailyRate;
+        const isActive = isPlayback && linkFlow > 0;
+
+        const { points } = getLinkRoute(source, target);
+        if (points.length < 2) return;
+
+        const linkColor = isSelected ? '#38bdf8' : isActive ? '#22c55e' : '#38bdf8';
+        ctx.strokeStyle = linkColor;
+        ctx.lineWidth = isSelected ? 4 : isActive ? 3.5 : 3;
+        ctx.setLineDash([]);
+
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(points[i].x, points[i].y);
+        }
+        ctx.stroke();
+
+        const startArrowOffset = 40;
+        const p0 = points[0];
+        const p1 = points[1];
+        const angle0 = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+        const seg0Len = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+        if (seg0Len > 5) {
+          const dist = Math.min(startArrowOffset, seg0Len / 2);
+          drawArrowHead(ctx, p0.x + Math.cos(angle0) * dist, p0.y + Math.sin(angle0) * dist, angle0, linkColor);
+        }
+
+        const endArrowOffset = 16;
+        const pEndPrev = points[points.length - 2];
+        const pEnd = points[points.length - 1];
+        const angleEnd = Math.atan2(pEnd.y - pEndPrev.y, pEnd.x - pEndPrev.x);
+        const segEndLen = Math.hypot(pEnd.x - pEndPrev.x, pEnd.y - pEndPrev.y);
+        if (segEndLen > 5) {
+          const dist = Math.min(endArrowOffset, segEndLen / 2);
+          drawArrowHead(ctx, pEnd.x - Math.cos(angleEnd) * dist, pEnd.y - Math.sin(angleEnd) * dist, angleEnd, linkColor);
+        }
+
+        const midIdx = Math.floor(points.length / 2);
+        const badgePt = {
+          x: (points[midIdx - 1].x + points[midIdx].x) / 2,
+          y: (points[midIdx - 1].y + points[midIdx].y) / 2
+        };
+
+        const displayRateText = `${Math.round(linkFlow).toLocaleString()} m³/d`;
+        ctx.fillStyle = isSelected ? '#0369a1' : '#1e293b';
+        ctx.fillRect(badgePt.x - 45, badgePt.y - 11, 90, 22);
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(badgePt.x - 45, badgePt.y - 11, 90, 22);
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(displayRateText, badgePt.x, badgePt.y + 4);
+      });
+
+      // 4. Draw Nodes
+      nodes.forEach(node => {
+        const isSelected = selectedNodeIds.includes(node.id);
+        const width = 120;
+        const height = 80;
+        const liveVol = isPlayback && currentFrame ? (currentFrame.nodeVolumes[node.id] ?? node.currentVolume) : node.currentVolume;
+        const fillPct = Math.min(1, Math.max(0, liveVol / node.capacity));
+        const isOverfilled = liveVol > node.capacity;
+
+        if (isSelected) {
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(node.x - 4, node.y - 4, width + 8, height + 8);
+        }
+
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(node.x, node.y, width, height);
+        ctx.strokeStyle = isOverfilled ? '#ef4444' : (isSelected ? '#38bdf8' : '#334155');
+        ctx.lineWidth = isOverfilled ? 2.5 : 2;
+        ctx.strokeRect(node.x, node.y, width, height);
+
+        ctx.fillStyle = isOverfilled ? '#ef4444' : (node.type === 'excavation' ? '#0d9488' : node.type === 'stockpile' ? '#b45309' : '#475569');
+        ctx.fillRect(node.x + 8, node.y + 55, (width - 16) * Math.min(1, fillPct), 12);
+
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(node.x + 8, node.y + 55, width - 16, 12);
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 11px system-ui, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(node.name, node.x + 10, node.y + 22);
+
+        ctx.fillStyle = isOverfilled ? '#fca5a5' : '#94a3b8';
+        ctx.font = '9px system-ui, sans-serif';
+        ctx.fillText(`Mat: ${node.materialType}`, node.x + 10, node.y + 38);
+        ctx.fillText(`Vol: ${Math.round(liveVol).toLocaleString()} m³`, node.x + 10, node.y + 50);
+      });
+    };
+
+    render();
+
+    // ResizeObserver watches parent container dimensions (e.g. graph drawer toggle)
+    const resizeObserver = new ResizeObserver(() => {
+      render();
     });
-  }, [nodes, links, selectedNodeIds, selectedLinkId, isPlayback, currentFrame]);
 
+    resizeObserver.observe(parent);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [nodes, links, selectedNodeIds, selectedLinkId, isPlayback, currentFrame]);
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isPlayback) return;
     const canvas = canvasRef.current;
