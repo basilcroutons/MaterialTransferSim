@@ -15,6 +15,7 @@ export default function App() {
 
   const [isPlayback, setIsPlayback] = useState<boolean>(false);
   const [currentDay, setCurrentDay] = useState<number>(0);
+  const [isGraphExpanded, setIsGraphExpanded] = useState<boolean>(false);
   
   // CSV Export Modal State
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
@@ -30,6 +31,7 @@ export default function App() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const currentFrame = vm.getCurrentFrame();
+  const frames = vm.getFrames();
 
   const selectedLink = selectedLinkId ? links.find(l => l.id === selectedLinkId) : null;
   const singleSelectedNode = selectedNodeIds.length === 1 ? nodes.find(n => n.id === selectedNodeIds[0]) : null;
@@ -171,11 +173,7 @@ export default function App() {
       ctx.strokeStyle = linkColor;
       ctx.lineWidth = isSelected ? 4 : isActive ? 3.5 : 3;
 
-      if (isActive) {
-        ctx.setLineDash([6, 6]);
-      } else {
-        ctx.setLineDash([]);
-      }
+      ctx.setLineDash([]);
 
       ctx.beginPath();
       ctx.moveTo(points[0].x, points[0].y);
@@ -183,7 +181,6 @@ export default function App() {
         ctx.lineTo(points[i].x, points[i].y);
       }
       ctx.stroke();
-      ctx.setLineDash([]);
 
       const startArrowOffset = 40;
       const p0 = points[0];
@@ -197,7 +194,7 @@ export default function App() {
         drawArrowHead(ctx, ax0, ay0, angle0, linkColor);
       }
 
-      const endArrowOffset = 0;
+      const endArrowOffset = 16;
       const pEndPrev = points[points.length - 2];
       const pEnd = points[points.length - 1];
       const angleEnd = Math.atan2(pEnd.y - pEndPrev.y, pEnd.x - pEndPrev.x);
@@ -434,6 +431,9 @@ export default function App() {
       vm.setFrameIndex(0);
       setSelectedNodeIds([]);
       setSelectedLinkId(null);
+      setIsGraphExpanded(true);
+    } else {
+      setIsGraphExpanded(false);
     }
   };
 
@@ -604,7 +604,7 @@ export default function App() {
   const hasSelection = selectedNodeIds.length > 0 || selectedLinkId !== null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: '#0f172a', fontFamily: 'system-ui, sans-serif' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh', maxHeight: '100vh', overflow: 'hidden', backgroundColor: '#0f172a', fontFamily: 'system-ui, sans-serif', boxSizing: 'border-box' }}>
       
       <input
         type="file"
@@ -615,11 +615,11 @@ export default function App() {
       />
 
       {/* Top Header */}
-      <header style={{ height: '52px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', boxSizing: 'border-box' }}>
+      <header style={{ height: '52px', minHeight: '52px', backgroundColor: '#1e293b', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', boxSizing: 'border-box', zIndex: 30 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '2px', color: '#22c55e' }}>E4D</span>
           <span style={{ height: '14px', width: '1px', backgroundColor: 'rgba(255, 255, 255, 0.2)' }} />
-          <span style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '1px', color: '#94a3b8', textTransform: 'uppercase' }}>Material Transfer Sim — Phase 2f Rules Engine</span>
+          <span style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '1px', color: '#94a3b8', textTransform: 'uppercase' }}>Material Transfer Sim — Thumb-Center Aligned Graph & Scrubber</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button
@@ -662,10 +662,10 @@ export default function App() {
       </header>
 
       {/* Batch Preset Control Bar */}
-      <div style={{ height: '46px', backgroundColor: '#0f172a', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', boxSizing: 'border-box' }}>
+      <div style={{ height: '46px', minHeight: '46px', backgroundColor: '#0f172a', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#94a3b8' }}>
           <span style={{ fontWeight: 'bold', color: '#f8fafc' }}>⚙️ Quick Batch Presets:</span>
-          <span>Apply rule defaults across all container nodes simultaneously. (Individual nodes remain customizable in Property Inspector).</span>
+          <span>Apply rule defaults across all container nodes simultaneously.</span>
         </div>
         
         <div style={{ display: 'flex', gap: '6px', backgroundColor: '#1e293b', padding: '4px', borderRadius: '6px', border: '1px solid #334155' }}>
@@ -674,16 +674,7 @@ export default function App() {
               vm.applyGlobalPreset('strict', 'throttleback');
               setNodes([...vm.getNodes()]);
             }}
-            style={{
-              backgroundColor: '#0284c7',
-              color: '#fff',
-              border: 'none',
-              padding: '5px 12px',
-              borderRadius: '4px',
-              fontSize: '11px',
-              fontWeight: 'bold',
-              cursor: 'pointer'
-            }}
+            style={{ backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
           >
             🔒 All Strict (Throttleback)
           </button>
@@ -692,16 +683,7 @@ export default function App() {
               vm.applyGlobalPreset('strict', 'headroom_hold');
               setNodes([...vm.getNodes()]);
             }}
-            style={{
-              backgroundColor: '#0d9488',
-              color: '#fff',
-              border: 'none',
-              padding: '5px 12px',
-              borderRadius: '4px',
-              fontSize: '11px',
-              fontWeight: 'bold',
-              cursor: 'pointer'
-            }}
+            style={{ backgroundColor: '#0d9488', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
           >
             ⏱️ All Strict (Headroom Hold)
           </button>
@@ -710,82 +692,208 @@ export default function App() {
               vm.applyGlobalPreset('overfill');
               setNodes([...vm.getNodes()]);
             }}
-            style={{
-              backgroundColor: '#b45309',
-              color: '#fde047',
-              border: 'none',
-              padding: '5px 12px',
-              borderRadius: '4px',
-              fontSize: '11px',
-              fontWeight: 'bold',
-              cursor: 'pointer'
-            }}
+            style={{ backgroundColor: '#b45309', color: '#fde047', border: 'none', padding: '5px 12px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
           >
             ⚠️ All Overfill
           </button>
         </div>
       </div>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      {/* Main Workspace Split */}
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         
-        <div style={{ flex: 3, position: 'relative', height: '100%' }}>
-          <div style={{ position: 'absolute', top: '16px', left: '20px', pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: '12px', zIndex: 10 }}>
-            <span style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '1px', color: isPlayback ? '#eab308' : '#64748b', textTransform: 'uppercase' }}>
-              {isPlayback ? `[PLAYBACK ACTIVE — DAY ${currentDay} / 30]` : 'Canvas Active'}
-            </span>
+        {/* Left Area: Canvas + Graph Drawer */}
+        <div style={{ flex: 3, display: 'flex', flexDirection: 'column', position: 'relative', height: '100%', minHeight: 0, overflow: 'hidden' }}>
+          
+          <div style={{ flex: 1, position: 'relative', minHeight: 0, overflow: 'hidden' }}>
+            <div style={{ position: 'absolute', top: '16px', left: '20px', pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: '12px', zIndex: 10 }}>
+              <span style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '1px', color: isPlayback ? '#eab308' : '#64748b', textTransform: 'uppercase' }}>
+                {isPlayback ? `[PLAYBACK ACTIVE — DAY ${currentDay} / 30]` : 'Canvas Active'}
+              </span>
+            </div>
+
+            {!isPlayback && (
+              <div style={{ position: 'absolute', top: '16px', right: '20px', display: 'flex', gap: '8px', zIndex: 20, backgroundColor: 'rgba(30, 41, 59, 0.9)', padding: '6px 10px', borderRadius: '8px', border: '1px solid #334155', backdropFilter: 'blur(4px)' }}>
+                <button onClick={handleAddNode} style={{ backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>
+                  + Add Node
+                </button>
+                <button
+                  onClick={handleAddLinkBetweenSelected}
+                  disabled={!canLink}
+                  style={{
+                    backgroundColor: canLink ? '#0d9488' : '#334155',
+                    color: canLink ? '#fff' : '#94a3b8',
+                    border: 'none',
+                    padding: '6px 10px',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    fontWeight: 'bold',
+                    cursor: canLink ? 'pointer' : 'not-allowed'
+                  }}
+                >
+                  🔗 +Link (2 Selected)
+                </button>
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={!hasSelection}
+                  style={{
+                    backgroundColor: hasSelection ? '#b91c1c' : '#334155',
+                    color: hasSelection ? '#fff' : '#94a3b8',
+                    border: 'none',
+                    padding: '6px 10px',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    fontWeight: 'bold',
+                    cursor: hasSelection ? 'pointer' : 'not-allowed'
+                  }}
+                >
+                  🗑️ Delete
+                </button>
+              </div>
+            )}
+
+            <canvas
+              ref={canvasRef}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              style={{ display: 'block', width: '100%', height: '100%', cursor: isPlayback ? 'default' : (isDragging ? 'grabbing' : 'default') }}
+            />
           </div>
 
-          {!isPlayback && (
-            <div style={{ position: 'absolute', top: '16px', right: '20px', display: 'flex', gap: '8px', zIndex: 20, backgroundColor: 'rgba(30, 41, 59, 0.9)', padding: '6px 10px', borderRadius: '8px', border: '1px solid #334155', backdropFilter: 'blur(4px)' }}>
-              <button onClick={handleAddNode} style={{ backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>
-                + Add Node
-              </button>
-              <button
-                onClick={handleAddLinkBetweenSelected}
-                disabled={!canLink}
-                style={{
-                  backgroundColor: canLink ? '#0d9488' : '#334155',
-                  color: canLink ? '#fff' : '#94a3b8',
-                  border: 'none',
-                  padding: '6px 10px',
-                  borderRadius: '4px',
-                  fontSize: '11px',
-                  fontWeight: 'bold',
-                  cursor: canLink ? 'pointer' : 'not-allowed'
-                }}
-              >
-                🔗 +Link (2 Selected)
-              </button>
-              <button
-                onClick={handleDeleteSelected}
-                disabled={!hasSelection}
-                style={{
-                  backgroundColor: hasSelection ? '#b91c1c' : '#334155',
-                  color: hasSelection ? '#fff' : '#94a3b8',
-                  border: 'none',
-                  padding: '6px 10px',
-                  borderRadius: '4px',
-                  fontSize: '11px',
-                  fontWeight: 'bold',
-                  cursor: hasSelection ? 'pointer' : 'not-allowed'
-                }}
-              >
-                🗑️ Delete
-              </button>
+          {/* PLAYBACK GRAPH DRAWER (Side-by-Side: Legend on Left, Thumb-Center Aligned Graph on Right) */}
+          {isPlayback && (
+            <div style={{ backgroundColor: '#1e293b', borderTop: '1px solid #334155', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+              
+              {isGraphExpanded ? (
+                <div style={{ height: '220px', maxHeight: '220px', padding: '12px 20px', borderBottom: '1px solid #334155', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                      Container Volume Telemetry & Timeline Alignment (Days 0 - 30)
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <button
+                        onClick={() => setIsGraphExpanded(false)}
+                        style={{ backgroundColor: '#334155', color: '#f8fafc', border: 'none', padding: '3px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        ▼ Collapse Graph
+                      </button>
+                      <span style={{ fontSize: '11px', color: '#94a3b8' }}>Active Day: <strong style={{ color: '#f8fafc' }}>Day {currentDay}</strong></span>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: '16px' }}>
+                    
+                    {/* Left Side: Legend & Volumes */}
+                    <div style={{ width: '220px', minWidth: '220px', backgroundColor: '#0f172a', borderRadius: '4px', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '6px', overflowY: 'auto', border: '1px solid #334155', boxSizing: 'border-box' }}>
+                      <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', paddingBottom: '4px' }}>
+                        Series Legend & Volumes
+                      </div>
+                      {nodes.map((node, idx) => {
+                        const colors = ['#0d9488', '#b45309', '#38bdf8', '#a855f7', '#22c55e', '#ec4899'];
+                        const color = colors[idx % colors.length];
+                        const liveVol = currentFrame ? Math.round(currentFrame.nodeVolumes[node.id] ?? node.currentVolume) : node.currentVolume;
+                        return (
+                          <div key={node.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '11px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+                              <span style={{ width: '8px', height: '8px', backgroundColor: color, borderRadius: '2px', flexShrink: 0 }} />
+                              <span style={{ color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100px' }} title={node.name}>{node.name}</span>
+                            </div>
+                            <span style={{ color: '#38bdf8', fontWeight: 'bold', fontFamily: 'monospace' }}>{liveVol.toLocaleString()} m³</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Right Side: Graph + Integrated Scrubber (Aligned exactly to Slider Thumb Centers & Extents) */}
+                    <div style={{ flex: 1, minHeight: 0, position: 'relative', backgroundColor: '#0f172a', borderRadius: '4px', padding: '8px 0', boxSizing: 'border-box', border: '1px solid #334155', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                      
+                      <div style={{ flex: 1, minHeight: 0, position: 'relative', width: '100%', padding: '0 20px', boxSizing: 'border-box' }}>
+                        <svg width="100%" height="100%" viewBox="0 0 500 95" preserveAspectRatio="none" style={{ position: 'absolute', top: 0, left: 20, width: 'calc(100% - 40px)', height: '100%', display: 'block' }}>
+                          <line x1="0" y1="23" x2="500" y2="23" stroke="#1e293b" strokeWidth="1" />
+                          <line x1="0" y1="47" x2="500" y2="47" stroke="#1e293b" strokeWidth="1" />
+                          <line x1="0" y1="70" x2="500" y2="70" stroke="#1e293b" strokeWidth="1" />
+
+                          {nodes.map((node, idx) => {
+                            const colors = ['#0d9488', '#b45309', '#38bdf8', '#a855f7', '#22c55e', '#ec4899'];
+                            const color = colors[idx % colors.length];
+                            const maxCap = Math.max(...nodes.map(n => n.capacity), 50000);
+
+                            const points = frames.map((frame, fIdx) => {
+                              const x = (fIdx / 30) * 500;
+                              const y = 90 - (Math.min(node.capacity, frame.nodeVolumes[node.id] || 0) / maxCap) * 85;
+                              return `${x},${y}`;
+                            }).join(' ');
+
+                            return (
+                              <g key={node.id}>
+                                <polyline fill="none" stroke={color} strokeWidth="2.5" points={points} />
+                              </g>
+                            );
+                          })}
+
+                          {/* Solid Thin Green Timeline Indicator Cursor aligned with currentDay */}
+                          <line
+                            x1={(currentDay / 30) * 500}
+                            y1="0"
+                            x2={(currentDay / 30) * 500}
+                            y2="95"
+                            stroke="#22c55e"
+                            strokeWidth="1"
+                          />
+                        </svg>
+                      </div>
+
+                      {/* Scrubber Range Input & Extent Axis Labels */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px', padding: '0 12px', boxSizing: 'border-box' }}>
+                        <input
+                          type="range"
+                          min="0"
+                          max="30"
+                          value={currentDay}
+                          onChange={handleSliderChange}
+                          style={{ width: '100%', accentColor: '#22c55e', cursor: 'pointer', height: '6px', margin: 0, boxSizing: 'border-box' }}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#94a3b8', padding: '0 8px', boxSizing: 'border-box' }}>
+                          <span style={{ marginLeft: '-6px' }}>Day 0</span>
+                          <span>Day 15</span>
+                          <span style={{ marginRight: '-6px' }}>Day 30</span>
+                        </div>
+                      </div>
+
+                    </div>
+
+                  </div>
+                </div>
+              ) : (
+                /* Collapsed Footer Bar */
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '10px 20px', boxSizing: 'border-box' }}>
+                  <button
+                    onClick={() => setIsGraphExpanded(true)}
+                    style={{ backgroundColor: '#334155', color: '#f8fafc', border: 'none', padding: '5px 10px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    ▲ Pull Up Graph
+                  </button>
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#f8fafc', minWidth: '60px' }}>Day {currentDay}</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="30"
+                    value={currentDay}
+                    onChange={handleSliderChange}
+                    style={{ flex: 1, accentColor: '#22c55e', cursor: 'pointer', height: '6px' }}
+                  />
+                  <span style={{ fontSize: '12px', color: '#94a3b8' }}>Day 30</span>
+                </div>
+              )}
+
             </div>
           )}
 
-          <canvas
-            ref={canvasRef}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            style={{ display: 'block', width: '100%', height: '100%', cursor: isPlayback ? 'default' : (isDragging ? 'grabbing' : 'default') }}
-          />
         </div>
 
-        {/* Right 1/4: RHS Property Inspector Pane */}
-        <div style={{ flex: 1, backgroundColor: '#1e293b', borderLeft: '1px solid #334155', display: 'flex', flexDirection: 'column', color: '#f8fafc', padding: '20px', boxSizing: 'border-box', overflowY: 'auto', minWidth: '300px' }}>
+        {/* Right 1/4: RHS Property Inspector / Telemetry Pane */}
+        <div style={{ flex: 1, backgroundColor: '#1e293b', borderLeft: '1px solid #334155', display: 'flex', flexDirection: 'column', color: '#f8fafc', padding: '20px', boxSizing: 'border-box', overflowY: 'auto', minWidth: '300px', height: '100%', minHeight: 0 }}>
           <div style={{ fontSize: '14px', fontWeight: 700, letterSpacing: '1px', color: '#38bdf8', textTransform: 'uppercase', marginBottom: '16px', borderBottom: '1px solid #334155', paddingBottom: '10px' }}>
             {isPlayback ? `Simulation Telemetry (Day ${currentDay})` : 'Property Inspector'}
           </div>
@@ -872,9 +980,9 @@ export default function App() {
                     <input type="number" value={singleSelectedNode.plantCount} onChange={e => updateSingleNode('plantCount', Number(e.target.value))} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
                   </div>
 
-                  {/* Phase 2f Strict Mode Sub-Rules Panel */}
+                  {/* Strict Mode Sub-Rules Panel */}
                   <div style={{ backgroundColor: '#0f172a', padding: '12px', borderRadius: '6px', border: '1px solid #334155', marginTop: '6px' }}>
-                    <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#38bdf8', marginBottom: '8px' }}>Phase 2f: Strict Rules Controls</div>
+                    <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#38bdf8', marginBottom: '8px' }}>Strict Rules Controls</div>
                     
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
                       <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Node Overflow Mode</label>
@@ -981,23 +1089,6 @@ export default function App() {
         </div>
       </div>
 
-      {isPlayback && (
-        <footer style={{ height: '64px', backgroundColor: '#1e293b', borderTop: '1px solid #334155', display: 'flex', alignItems: 'center', padding: '0 24px', gap: '20px', boxSizing: 'border-box' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', minWidth: '100px' }}>
-            <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>TIMELINE SCRUBBER</span>
-            <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#22c55e' }}>Day {currentDay} / 30</span>
-          </div>
-          <input
-            type="range"
-            min="0"
-            max="30"
-            value={currentDay}
-            onChange={handleSliderChange}
-            style={{ flex: 1, accentColor: '#22c55e', cursor: 'pointer', height: '6px' }}
-          />
-        </footer>
-      )}
-
       {/* Save As / Export CSV Dialog Modal */}
       {isExportModalOpen && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0, 0, 0, 0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
@@ -1009,7 +1100,7 @@ export default function App() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '12px', color: '#cbd5e1', lineHeight: '1.5' }}>
               <div>
-                Exports a robust, clean CSV containing both the <strong>Initial Model Configuration</strong> and the <strong>30-Day Simulation Timeline Telemetry</strong> without formatting corruption.
+                Exports a robust, clean CSV containing both the <strong>Initial Model Configuration</strong> and the <strong>30-Day Simulation Timeline Telemetry</strong>.
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <label style={{ fontWeight: 600, color: '#94a3b8' }}>Save As Filename</label>
