@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { CanvasViewModel } from './viewmodel/CanvasViewModel';
-import { ContainerNode, TransferLink, OverflowMode, StrictSubRule } from './models/types';
+import { ContainerNode, TransferLink, OverflowMode, StrictSubRule, MaterialDefinition } from './models/types';
 
 interface Point { x: number; y: number; }
 
@@ -8,6 +8,7 @@ export default function App() {
   const [vm] = useState(() => new CanvasViewModel());
   const [nodes, setNodes] = useState<ContainerNode[]>(vm.getNodes());
   const [links, setLinks] = useState<TransferLink[]>(vm.getLinks());
+  const [materials, setMaterials] = useState<MaterialDefinition[]>(vm.getMaterials());
   
   // Selection state
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(['node-1']);
@@ -17,9 +18,8 @@ export default function App() {
   const [currentDay, setCurrentDay] = useState<number>(0);
   const [isGraphExpanded, setIsGraphExpanded] = useState<boolean>(false);
   
-  // CSV Export Modal State
-  const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
-  const [exportFileName, setExportFileName] = useState<string>('material_transfer_simulation_complete.csv');
+  // Upward Material Drawer State in Property Inspector
+  const [isMaterialDrawerOpen, setIsMaterialDrawerOpen] = useState<boolean>(false);
 
   // Hidden file input ref for import
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -198,7 +198,7 @@ export default function App() {
       const pEndPrev = points[points.length - 2];
       const pEnd = points[points.length - 1];
       const angleEnd = Math.atan2(pEnd.y - pEndPrev.y, pEnd.x - pEndPrev.x);
-      const segEndLen = Math.hypot(pEnd.x - pEndPrev.x, pEnd.y - pEndPrev.x);
+      const segEndLen = Math.hypot(pEnd.x - pEndPrev.x, pEnd.y - pEndPrev.y);
       if (segEndLen > 5) {
         const dist = Math.min(endArrowOffset, segEndLen / 2);
         const axEnd = pEnd.x - Math.cos(angleEnd) * dist;
@@ -260,7 +260,7 @@ export default function App() {
 
       ctx.fillStyle = isOverfilled ? '#fca5a5' : '#94a3b8';
       ctx.font = '9px system-ui, sans-serif';
-      ctx.fillText(`Type: ${node.type}`, node.x + 10, node.y + 38);
+      ctx.fillText(`Mat: ${node.materialType}`, node.x + 10, node.y + 38);
       ctx.fillText(`Vol: ${Math.round(liveVol).toLocaleString()} m³`, node.x + 10, node.y + 50);
     });
   }, [nodes, links, selectedNodeIds, selectedLinkId, isPlayback, currentFrame]);
@@ -379,7 +379,7 @@ export default function App() {
       y: 200,
       capacity: 40000,
       currentVolume: 10000,
-      materialType: 'Type 1 Fill',
+      materialType: materials[0]?.code || 'CLAY',
       plantCount: 3,
       overflowMode: 'strict',
       strictSubRule: 'throttleback'
@@ -432,6 +432,7 @@ export default function App() {
       setSelectedNodeIds([]);
       setSelectedLinkId(null);
       setIsGraphExpanded(true);
+      setIsMaterialDrawerOpen(false);
     } else {
       setIsGraphExpanded(false);
     }
@@ -551,55 +552,6 @@ export default function App() {
     e.target.value = '';
   };
 
-  const confirmExportCSV = () => {
-    const frames = vm.getFrames();
-    const nodesList = vm.getNodes();
-    const linksList = vm.getLinks();
-
-    let csvRows: string[] = [];
-
-    csvRows.push('# SECTION: INITIAL MODEL NODES');
-    csvRows.push('NodeID,Name,Type,X,Y,Capacity,InitialVolume,MaterialType,PlantCount');
-    nodesList.forEach(n => {
-      csvRows.push(`${n.id},"${n.name}",${n.type},${n.x},${n.y},${n.capacity},${n.currentVolume},"${n.materialType}",${n.plantCount}`);
-    });
-
-    csvRows.push('');
-    csvRows.push('# SECTION: INITIAL MODEL LINKS');
-    csvRows.push('LinkId,SourceId,TargetId,DailyRate,FleetCount');
-    linksList.forEach(l => {
-      csvRows.push(`${l.id},${l.sourceId},${l.targetId},${l.dailyRate},${l.fleetCount}`);
-    });
-
-    csvRows.push('');
-    csvRows.push('# SECTION: SIMULATION TIMELINE TELEMETRY');
-    csvRows.push('Day,EntityType,EntityId,EntityName,Value,CapacityOrDailyRate,Alerts');
-    frames.forEach(frame => {
-      const alertStr = `"${(frame.alerts || []).join(' | ')}"`;
-      nodesList.forEach(node => {
-        const vol = Math.round(frame.nodeVolumes[node.id] ?? node.currentVolume);
-        csvRows.push(`${frame.day},Node,${node.id},"${node.name}",${vol},${node.capacity},${alertStr}`);
-      });
-      linksList.forEach(link => {
-        const flow = Math.round(frame.linkFlows[link.id] ?? 0);
-        csvRows.push(`${frame.day},Link,${link.id},"${link.sourceId}->${link.targetId}",${flow},${link.dailyRate},${alertStr}`);
-      });
-    });
-
-    const csvString = csvRows.join('\n');
-    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', exportFileName.endsWith('.csv') ? exportFileName : `${exportFileName}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    setIsExportModalOpen(false);
-  };
-
   const canLink = selectedNodeIds.length === 2 && !isPlayback;
   const hasSelection = selectedNodeIds.length > 0 || selectedLinkId !== null;
 
@@ -670,28 +622,19 @@ export default function App() {
         
         <div style={{ display: 'flex', gap: '6px', backgroundColor: '#1e293b', padding: '4px', borderRadius: '6px', border: '1px solid #334155' }}>
           <button
-            onClick={() => {
-              vm.applyGlobalPreset('strict', 'throttleback');
-              setNodes([...vm.getNodes()]);
-            }}
+            onClick={() => { vm.applyGlobalPreset('strict', 'throttleback'); setNodes([...vm.getNodes()]); }}
             style={{ backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
           >
             🔒 All Strict (Throttleback)
           </button>
           <button
-            onClick={() => {
-              vm.applyGlobalPreset('strict', 'headroom_hold');
-              setNodes([...vm.getNodes()]);
-            }}
+            onClick={() => { vm.applyGlobalPreset('strict', 'headroom_hold'); setNodes([...vm.getNodes()]); }}
             style={{ backgroundColor: '#0d9488', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
           >
             ⏱️ All Strict (Headroom Hold)
           </button>
           <button
-            onClick={() => {
-              vm.applyGlobalPreset('overfill');
-              setNodes([...vm.getNodes()]);
-            }}
+            onClick={() => { vm.applyGlobalPreset('overfill'); setNodes([...vm.getNodes()]); }}
             style={{ backgroundColor: '#b45309', color: '#fde047', border: 'none', padding: '5px 12px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
           >
             ⚠️ All Overfill
@@ -706,12 +649,6 @@ export default function App() {
         <div style={{ flex: 3, display: 'flex', flexDirection: 'column', position: 'relative', height: '100%', minHeight: 0, overflow: 'hidden' }}>
           
           <div style={{ flex: 1, position: 'relative', minHeight: 0, overflow: 'hidden' }}>
-            <div style={{ position: 'absolute', top: '16px', left: '20px', pointerEvents: 'none', display: 'flex', alignItems: 'center', gap: '12px', zIndex: 10 }}>
-              <span style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '1px', color: isPlayback ? '#eab308' : '#64748b', textTransform: 'uppercase' }}>
-                {isPlayback ? `[PLAYBACK ACTIVE — DAY ${currentDay} / 30]` : 'Canvas Active'}
-              </span>
-            </div>
-
             {!isPlayback && (
               <div style={{ position: 'absolute', top: '16px', right: '20px', display: 'flex', gap: '8px', zIndex: 20, backgroundColor: 'rgba(30, 41, 59, 0.9)', padding: '6px 10px', borderRadius: '8px', border: '1px solid #334155', backdropFilter: 'blur(4px)' }}>
                 <button onClick={handleAddNode} style={{ backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>
@@ -764,7 +701,6 @@ export default function App() {
           {/* PLAYBACK GRAPH DRAWER (Side-by-Side: Legend on Left, Thumb-Center Aligned Graph on Right) */}
           {isPlayback && (
             <div style={{ backgroundColor: '#1e293b', borderTop: '1px solid #334155', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-              
               {isGraphExpanded ? (
                 <div style={{ height: '220px', maxHeight: '220px', padding: '12px 20px', borderBottom: '1px solid #334155', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
@@ -783,7 +719,6 @@ export default function App() {
                   </div>
 
                   <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: '16px' }}>
-                    
                     {/* Left Side: Legend & Volumes */}
                     <div style={{ width: '220px', minWidth: '220px', backgroundColor: '#0f172a', borderRadius: '4px', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '6px', overflowY: 'auto', border: '1px solid #334155', boxSizing: 'border-box' }}>
                       <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase', borderBottom: '1px solid #1e293b', paddingBottom: '4px' }}>
@@ -805,9 +740,8 @@ export default function App() {
                       })}
                     </div>
 
-                    {/* Right Side: Graph + Integrated Scrubber (Aligned exactly to Slider Thumb Centers & Extents) */}
+                    {/* Right Side: Graph + Integrated Scrubber (Thumb-Center Aligned) */}
                     <div style={{ flex: 1, minHeight: 0, position: 'relative', backgroundColor: '#0f172a', borderRadius: '4px', padding: '8px 0', boxSizing: 'border-box', border: '1px solid #334155', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                      
                       <div style={{ flex: 1, minHeight: 0, position: 'relative', width: '100%', padding: '0 20px', boxSizing: 'border-box' }}>
                         <svg width="100%" height="100%" viewBox="0 0 500 95" preserveAspectRatio="none" style={{ position: 'absolute', top: 0, left: 20, width: 'calc(100% - 40px)', height: '100%', display: 'block' }}>
                           <line x1="0" y1="23" x2="500" y2="23" stroke="#1e293b" strokeWidth="1" />
@@ -818,33 +752,19 @@ export default function App() {
                             const colors = ['#0d9488', '#b45309', '#38bdf8', '#a855f7', '#22c55e', '#ec4899'];
                             const color = colors[idx % colors.length];
                             const maxCap = Math.max(...nodes.map(n => n.capacity), 50000);
-
                             const points = frames.map((frame, fIdx) => {
                               const x = (fIdx / 30) * 500;
                               const y = 90 - (Math.min(node.capacity, frame.nodeVolumes[node.id] || 0) / maxCap) * 85;
                               return `${x},${y}`;
                             }).join(' ');
 
-                            return (
-                              <g key={node.id}>
-                                <polyline fill="none" stroke={color} strokeWidth="2.5" points={points} />
-                              </g>
-                            );
+                            return <polyline key={node.id} fill="none" stroke={color} strokeWidth="2.5" points={points} />;
                           })}
 
-                          {/* Solid Thin Green Timeline Indicator Cursor aligned with currentDay */}
-                          <line
-                            x1={(currentDay / 30) * 500}
-                            y1="0"
-                            x2={(currentDay / 30) * 500}
-                            y2="95"
-                            stroke="#22c55e"
-                            strokeWidth="1"
-                          />
+                          <line x1={(currentDay / 30) * 500} y1="0" x2={(currentDay / 30) * 500} y2="95" stroke="#22c55e" strokeWidth="1" />
                         </svg>
                       </div>
 
-                      {/* Scrubber Range Input & Extent Axis Labels */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px', padding: '0 12px', boxSizing: 'border-box' }}>
                         <input
                           type="range"
@@ -860,13 +780,10 @@ export default function App() {
                           <span style={{ marginRight: '-6px' }}>Day 30</span>
                         </div>
                       </div>
-
                     </div>
-
                   </div>
                 </div>
               ) : (
-                /* Collapsed Footer Bar */
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '10px 20px', boxSizing: 'border-box' }}>
                   <button
                     onClick={() => setIsGraphExpanded(true)}
@@ -886,14 +803,13 @@ export default function App() {
                   <span style={{ fontSize: '12px', color: '#94a3b8' }}>Day 30</span>
                 </div>
               )}
-
             </div>
           )}
-
         </div>
 
-        {/* Right 1/4: RHS Property Inspector / Telemetry Pane */}
-        <div style={{ flex: 1, backgroundColor: '#1e293b', borderLeft: '1px solid #334155', display: 'flex', flexDirection: 'column', color: '#f8fafc', padding: '20px', boxSizing: 'border-box', overflowY: 'auto', minWidth: '300px', height: '100%', minHeight: 0 }}>
+        {/* Right 1/4: RHS Property Inspector with Upward Opening Material Drawer */}
+        <div style={{ flex: 1, backgroundColor: '#1e293b', borderLeft: '1px solid #334155', display: 'flex', flexDirection: 'column', color: '#f8fafc', padding: '20px', boxSizing: 'border-box', overflowY: 'auto', minWidth: '320px', height: '100%', position: 'relative' }}>
+          
           <div style={{ fontSize: '14px', fontWeight: 700, letterSpacing: '1px', color: '#38bdf8', textTransform: 'uppercase', marginBottom: '16px', borderBottom: '1px solid #334155', paddingBottom: '10px' }}>
             {isPlayback ? `Simulation Telemetry (Day ${currentDay})` : 'Property Inspector'}
           </div>
@@ -904,30 +820,6 @@ export default function App() {
                 <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600, marginBottom: '4px' }}>TIMELINE STATUS</div>
                 <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#22c55e' }}>Day {currentDay} of 30</div>
               </div>
-
-              <div style={{ backgroundColor: '#0f172a', padding: '14px', borderRadius: '6px', border: '1px solid #334155', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>SYSTEM DATA & MODEL EXPORT</div>
-                <button
-                  onClick={() => setIsExportModalOpen(true)}
-                  style={{
-                    backgroundColor: '#0284c7',
-                    color: '#fff',
-                    border: 'none',
-                    padding: '10px 14px',
-                    borderRadius: '6px',
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px'
-                  }}
-                >
-                  📊 Export Model + Sim CSV...
-                </button>
-              </div>
-
               <div>
                 <div style={{ fontSize: '12px', fontWeight: 700, color: '#eab308', marginBottom: '8px' }}>Active Alerts & Triggers</div>
                 {currentFrame && currentFrame.alerts.length > 0 ? (
@@ -946,7 +838,7 @@ export default function App() {
           ) : (
             <>
               {selectedNodeIds.length === 1 && singleSelectedNode && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '150px' }}>
                   <div style={{ fontSize: '12px', color: '#94a3b8', backgroundColor: '#0f172a', padding: '8px 12px', borderRadius: '4px' }}>
                     Selected: <strong style={{ color: '#38bdf8' }}>Container Node</strong>
                   </div>
@@ -971,10 +863,23 @@ export default function App() {
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Current Volume (m³)</label>
                     <input type="number" value={singleSelectedNode.currentVolume} onChange={e => updateSingleNode('currentVolume', Number(e.target.value))} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
                   </div>
+                  
+                  {/* ASSIGNED MATERIAL DROPDOWN */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Assigned Material</label>
-                    <input type="text" value={singleSelectedNode.materialType} onChange={e => updateSingleNode('materialType', e.target.value)} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
+                    <select
+                      value={singleSelectedNode.materialType}
+                      onChange={e => updateSingleNode('materialType', e.target.value)}
+                      style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px', fontWeight: 'bold' }}
+                    >
+                      {materials.map(mat => (
+                        <option key={mat.code} value={mat.code}>
+                          {mat.code} — {mat.name} (IN: {mat.bulkIN}, OUT: {mat.bulkOUT})
+                        </option>
+                      ))}
+                    </select>
                   </div>
+
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Plant / Fleet Count</label>
                     <input type="number" value={singleSelectedNode.plantCount} onChange={e => updateSingleNode('plantCount', Number(e.target.value))} style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }} />
@@ -1027,45 +932,10 @@ export default function App() {
                 </div>
               )}
 
-              {selectedNodeIds.length > 1 && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', backgroundColor: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}>
-                  <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#38bdf8' }}>
-                    {selectedNodeIds.length} Containers Selected
-                  </div>
-                  <div style={{ fontSize: '11px', color: '#94a3b8', lineHeight: '1.4' }}>
-                    Multi-selection active. Properties are blanked out when multiple records are selected.
-                  </div>
-                </div>
-              )}
-
               {selectedLink && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                   <div style={{ fontSize: '12px', color: '#94a3b8', backgroundColor: '#0f172a', padding: '8px 12px', borderRadius: '4px' }}>
                     Selected: <strong style={{ color: '#38bdf8' }}>Transfer Link</strong>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Source Container</label>
-                    <select
-                      value={selectedLink.sourceId}
-                      onChange={e => updateLink('sourceId', e.target.value)}
-                      style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }}
-                    >
-                      {nodes.map(n => (
-                        <option key={n.id} value={n.id}>{n.name} ({n.id})</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Target Container</label>
-                    <select
-                      value={selectedLink.targetId}
-                      onChange={e => updateLink('targetId', e.target.value)}
-                      style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '4px', color: '#f8fafc', padding: '8px', fontSize: '12px' }}
-                    >
-                      {nodes.map(n => (
-                        <option key={n.id} value={n.id}>{n.name} ({n.id})</option>
-                      ))}
-                    </select>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <label style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>Daily Rate (m³/day)</label>
@@ -1081,55 +951,152 @@ export default function App() {
               {!hasSelection && (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '250px', color: '#64748b', textAlign: 'center', fontSize: '12px', gap: '8px' }}>
                   <div>No entity selected</div>
-                  <div style={{ fontSize: '11px' }}>Click container nodes or transfer link badges to inspect and edit properties.</div>
+                  <div style={{ fontSize: '11px' }}>Click container nodes or link badges to inspect and edit properties.</div>
                 </div>
               )}
             </>
           )}
+
+          {/* UPWARD-OPENING MATERIAL DEFINITION DRAWER AT BOTTOM OF PROPERTY INSPECTOR */}
+          {!isPlayback && (
+            <div style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              backgroundColor: '#0f172a',
+              borderTop: '2px solid #38bdf8',
+              borderTopLeftRadius: '12px',
+              borderTopRightRadius: '12px',
+              boxShadow: '0 -8px 20px rgba(0,0,0,0.5)',
+              display: 'flex',
+              flexDirection: 'column',
+              transition: 'all 0.3s ease',
+              zIndex: 50
+            }}>
+              {/* Drawer Handle / Header */}
+              <div
+                onClick={() => setIsMaterialDrawerOpen(!isMaterialDrawerOpen)}
+                style={{
+                  height: '38px',
+                  backgroundColor: '#1e293b',
+                  borderTopLeftRadius: '10px',
+                  borderTopRightRadius: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '0 16px',
+                  cursor: 'pointer',
+                  userSelect: 'none'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '13px' }}>▲</span>
+                  <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#38bdf8', letterSpacing: '1px', textTransform: 'uppercase' }}>
+                    Material Definitions & Bulking Library ({materials.length})
+                  </span>
+                </div>
+                <span style={{ fontSize: '11px', color: '#94a3b8' }}>{isMaterialDrawerOpen ? 'Click to Close' : 'Click to Open'}</span>
+              </div>
+
+              {/* Drawer Content: Editable Table */}
+              {isMaterialDrawerOpen && (
+                <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '280px', overflowY: 'auto' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '10px', color: '#94a3b8' }}>Define swell (`bulkIN`) & shrinkage (`bulkOUT`) factors.</span>
+                    <button
+                      onClick={() => {
+                        const newCode = `MAT${materials.length + 1}`;
+                        vm.addMaterial({ code: newCode, name: 'New Material', bulkIN: 1.20, bulkOUT: 0.90 });
+                        setMaterials([...vm.getMaterials()]);
+                      }}
+                      style={{ backgroundColor: '#0284c7', color: '#fff', border: 'none', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      + Add Material
+                    </button>
+                  </div>
+
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#1e293b', color: '#94a3b8', textAlign: 'left' }}>
+                        <th style={{ padding: '6px' }}>Code</th>
+                        <th style={{ padding: '6px' }}>Name</th>
+                        <th style={{ padding: '6px' }}>bulkIN</th>
+                        <th style={{ padding: '6px' }}>bulkOUT</th>
+                        <th style={{ padding: '6px', textAlign: 'center' }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {materials.map((mat, idx) => (
+                        <tr key={mat.code} style={{ borderBottom: '1px solid #1e293b' }}>
+                          <td style={{ padding: '4px' }}>
+                            <input
+                              type="text"
+                              value={mat.code}
+                              onChange={e => {
+                                vm.updateMaterial(idx, 'code', e.target.value.toUpperCase());
+                                setMaterials([...vm.getMaterials()]);
+                              }}
+                              style={{ width: '45px', backgroundColor: '#1e293b', border: '1px solid #475569', color: '#f8fafc', padding: '3px', borderRadius: '3px', fontSize: '10px' }}
+                            />
+                          </td>
+                          <td style={{ padding: '4px' }}>
+                            <input
+                              type="text"
+                              value={mat.name}
+                              onChange={e => {
+                                vm.updateMaterial(idx, 'name', e.target.value);
+                                setMaterials([...vm.getMaterials()]);
+                              }}
+                              style={{ width: '85px', backgroundColor: '#1e293b', border: '1px solid #475569', color: '#f8fafc', padding: '3px', borderRadius: '3px', fontSize: '10px' }}
+                            />
+                          </td>
+                          <td style={{ padding: '4px' }}>
+                            <input
+                              type="number"
+                              step="0.05"
+                              value={mat.bulkIN}
+                              onChange={e => {
+                                vm.updateMaterial(idx, 'bulkIN', Number(e.target.value));
+                                setMaterials([...vm.getMaterials()]);
+                              }}
+                              style={{ width: '45px', backgroundColor: '#1e293b', border: '1px solid #475569', color: '#f8fafc', padding: '3px', borderRadius: '3px', fontSize: '10px' }}
+                            />
+                          </td>
+                          <td style={{ padding: '4px' }}>
+                            <input
+                              type="number"
+                              step="0.05"
+                              value={mat.bulkOUT}
+                              onChange={e => {
+                                vm.updateMaterial(idx, 'bulkOUT', Number(e.target.value));
+                                setMaterials([...vm.getMaterials()]);
+                              }}
+                              style={{ width: '45px', backgroundColor: '#1e293b', border: '1px solid #475569', color: '#f8fafc', padding: '3px', borderRadius: '3px', fontSize: '10px' }}
+                            />
+                          </td>
+                          <td style={{ padding: '4px', textAlign: 'center' }}>
+                            <button
+                              onClick={() => {
+                                vm.removeMaterial(mat.code);
+                                setMaterials([...vm.getMaterials()]);
+                              }}
+                              style={{ backgroundColor: '#7f1d1d', color: '#fca5a5', border: 'none', padding: '2px 6px', borderRadius: '3px', fontSize: '10px', cursor: 'pointer' }}
+                            >
+                              ✕
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
         </div>
       </div>
-
-      {/* Save As / Export CSV Dialog Modal */}
-      {isExportModalOpen && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0, 0, 0, 0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)' }}>
-          <div style={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '12px', width: '460px', padding: '24px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: '20px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #334155', paddingBottom: '12px' }}>
-              <div style={{ fontSize: '15px', fontWeight: 'bold', color: '#38bdf8' }}>📥 Export Complete Model + Sim CSV</div>
-              <button onClick={() => setIsExportModalOpen(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '18px', cursor: 'pointer' }}>✕</button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '12px', color: '#cbd5e1', lineHeight: '1.5' }}>
-              <div>
-                Exports a robust, clean CSV containing both the <strong>Initial Model Configuration</strong> and the <strong>30-Day Simulation Timeline Telemetry</strong>.
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <label style={{ fontWeight: 600, color: '#94a3b8' }}>Save As Filename</label>
-                <input
-                  type="text"
-                  value={exportFileName}
-                  onChange={e => setExportFileName(e.target.value)}
-                  style={{ backgroundColor: '#0f172a', border: '1px solid #475569', borderRadius: '6px', color: '#f8fafc', padding: '10px', fontSize: '12px', outline: 'none' }}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid #334155', paddingTop: '16px' }}>
-              <button
-                onClick={() => setIsExportModalOpen(false)}
-                style={{ backgroundColor: '#334155', color: '#f8fafc', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmExportCSV}
-                style={{ backgroundColor: '#22c55e', color: '#0f172a', border: 'none', padding: '8px 18px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '12px' }}
-              >
-                Download CSV
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

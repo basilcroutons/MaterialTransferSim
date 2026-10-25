@@ -1,19 +1,27 @@
-import { ContainerNode, TransferLink, SimFrame } from '../models/types';
+import { ContainerNode, TransferLink, SimFrame, MaterialDefinition } from '../models/types';
 import { SimEngine, OverflowMode, StrictSubRule } from '../simulation/SimEngine';
 
 export class CanvasViewModel {
   private nodes: ContainerNode[];
   private links: TransferLink[];
+  private materials: MaterialDefinition[];
   private frames: SimFrame[] = [];
   private currentFrameIndex: number = 0;
   private isPlayback: boolean = false;
   private overflowMode: OverflowMode = 'strict';
 
   constructor() {
+    this.materials = [
+      { code: 'TOPS', name: 'Topsoil', bulkIN: 1.20, bulkOUT: 0.95 },
+      { code: 'CLAY', name: 'Stiff Clay', bulkIN: 1.25, bulkOUT: 0.90 },
+      { code: 'ROCK', name: 'Solid Rock', bulkIN: 1.40, bulkOUT: 0.80 },
+      { code: 'SAND', name: 'Clean Sand', bulkIN: 1.10, bulkOUT: 1.00 }
+    ];
+
     this.nodes = [
-      { id: 'node-1', name: 'Source Cut A', type: 'excavation', x: 140, y: 160, capacity: 50000, currentVolume: 42000, materialType: 'Type 1 Fill', plantCount: 4, overflowMode: 'strict', strictSubRule: 'throttleback' },
-      { id: 'node-2', name: 'Buffer Stockpile B', type: 'stockpile', x: 440, y: 160, capacity: 30000, currentVolume: 12500, materialType: 'Type 1 Fill', plantCount: 2, overflowMode: 'strict', strictSubRule: 'throttleback', headroomThreshold: 500 },
-      { id: 'node-3', name: 'Processing Plant C', type: 'external', x: 740, y: 280, capacity: 100000, currentVolume: 55000, materialType: 'Crushed Aggregate', plantCount: 6, overflowMode: 'strict' },
+      { id: 'node-1', name: 'Source Cut A', type: 'excavation', x: 140, y: 160, capacity: 50000, currentVolume: 42000, materialType: 'CLAY', plantCount: 4, overflowMode: 'strict', strictSubRule: 'throttleback' },
+      { id: 'node-2', name: 'Buffer Stockpile B', type: 'stockpile', x: 440, y: 160, capacity: 30000, currentVolume: 12500, materialType: 'CLAY', plantCount: 2, overflowMode: 'strict', strictSubRule: 'throttleback', headroomThreshold: 500 },
+      { id: 'node-3', name: 'Processing Plant C', type: 'external', x: 740, y: 280, capacity: 100000, currentVolume: 55000, materialType: 'ROCK', plantCount: 6, overflowMode: 'strict' },
     ];
 
     this.links = [
@@ -21,6 +29,25 @@ export class CanvasViewModel {
       { id: 'link-2', sourceId: 'node-2', targetId: 'node-3', dailyRate: 1200, fleetCount: 4 },
     ];
 
+    this.recalculateSimulation();
+  }
+
+  public getMaterials(): MaterialDefinition[] { return this.materials; }
+  
+  public addMaterial(material: MaterialDefinition): void {
+    this.materials.push(material);
+    this.recalculateSimulation();
+  }
+
+  public updateMaterial(index: number, field: keyof MaterialDefinition, value: any): void {
+    if (this.materials[index]) {
+      (this.materials[index] as any)[field] = value;
+      this.recalculateSimulation();
+    }
+  }
+
+  public removeMaterial(code: string): void {
+    this.materials = this.materials.filter(m => m.code !== code);
     this.recalculateSimulation();
   }
 
@@ -49,7 +76,7 @@ export class CanvasViewModel {
   }
 
   public recalculateSimulation(): void {
-    const engine = new SimEngine(this.nodes, this.links, 30, this.overflowMode);
+    const engine = new SimEngine(this.nodes, this.links, this.materials, 30, this.overflowMode);
     this.frames = engine.runSimulation();
   }
 

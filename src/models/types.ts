@@ -3,6 +3,13 @@ export type OverflowMode = 'strict' | 'overfill';
 export type StrictSubRule = 'throttleback' | 'headroom_hold';
 export type NodeStatus = 'active' | 'maintenance' | 'blocked';
 
+export interface MaterialDefinition {
+  code: string;
+  name: string;
+  bulkIN: number;   // Swell / deposit factor (e.g., 1.25)
+  bulkOUT: number;  // Shrinkage / extraction factor (e.g., 0.90)
+}
+
 export interface ContainerNode {
   id: string;
   name: string;
@@ -11,9 +18,8 @@ export interface ContainerNode {
   y: number;
   capacity: number;
   currentVolume: number;
-  materialType: string;
+  materialType: string; // Material code reference (e.g., 'CLAY', 'TOPS')
   plantCount: number;
-  // Phase 2f Additions
   overflowMode?: OverflowMode;
   strictSubRule?: StrictSubRule;
   headroomThreshold?: number; // e.g. 500 m³ spare space required to resume after headroom hold
@@ -28,7 +34,6 @@ export interface TransferLink {
   dailyRate: number;
   fleetCount: number;
   materialId?: string;
-  // Phase 2f Additions
   priority?: number;
   rateSchedule?: { day: number; rate: number }[];
 }

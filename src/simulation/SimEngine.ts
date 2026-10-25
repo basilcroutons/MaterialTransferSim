@@ -1,4 +1,4 @@
-import { ContainerNode, TransferLink, SimFrame } from '../models/types';
+import { ContainerNode, TransferLink, SimFrame, MaterialDefinition } from '../models/types';
 
 export type OverflowMode = 'strict' | 'overfill';
 export type StrictSubRule = 'throttleback' | 'headroom_hold';
@@ -6,13 +6,21 @@ export type StrictSubRule = 'throttleback' | 'headroom_hold';
 export class SimEngine {
   private nodes: Map<string, ContainerNode>;
   private links: Map<string, TransferLink>;
+  private materials: Map<string, MaterialDefinition>;
   private totalDays: number;
   private defaultOverflowMode: OverflowMode;
   private headroomHoldStates: Map<string, boolean> = new Map();
 
-  constructor(nodes: ContainerNode[], links: TransferLink[], totalDays: number = 30, overflowMode: OverflowMode = 'strict') {
+  constructor(
+    nodes: ContainerNode[],
+    links: TransferLink[],
+    materials: MaterialDefinition[] = [],
+    totalDays: number = 30,
+    overflowMode: OverflowMode = 'strict'
+  ) {
     this.nodes = new Map(nodes.map(n => [n.id, { ...n }]));
     this.links = new Map(links.map(l => [l.id, { ...l }]));
+    this.materials = new Map(materials.map(m => [m.code, { ...m }]));
     this.totalDays = totalDays;
     this.defaultOverflowMode = overflowMode;
   }
@@ -26,7 +34,6 @@ export class SimEngine {
       const nodeVolumes: Record<string, number> = {};
       const linkFlows: Record<string, number> = {};
 
-      // 1. Evaluate scheduled rate changes / calendar hooks for links
       const activeLinkRates: Map<string, number> = new Map();
       this.links.forEach(link => {
         let currentRate = link.dailyRate;
@@ -41,7 +48,6 @@ export class SimEngine {
         activeLinkRates.set(link.id, currentRate);
       });
 
-      // Group incoming links by target container to handle pro-rata sharing & headroom
       const targetInflows: Map<string, TransferLink[]> = new Map();
       this.links.forEach(link => {
         const target = this.nodes.get(link.targetId);
@@ -53,9 +59,8 @@ export class SimEngine {
       });
 
       const plannedTransfers: Map<string, number> = new Map();
-
-      // First pass: Calculate requested volumes based on source availability, status, and material validation
       const requestedTransfers: Map<string, number> = new Map();
+
       this.links.forEach(link => {
         const source = this.nodes.get(link.sourceId);
         const target = this.nodes.get(link.targetId);
@@ -66,7 +71,6 @@ export class SimEngine {
           return;
         }
 
-        // Check source status
         if (source.status === 'blocked' || source.status === 'maintenance') {
           requestedTransfers.set(link.id, 0);
           if (day > 0 && !alerts.includes(`Day ${day}: Source ${source.name} is blocked or under maintenance.`)) {
@@ -75,7 +79,6 @@ export class SimEngine {
           return;
         }
 
-        // Check source stockout
         if (source.currentVolume <= 0) {
           requestedTransfers.set(link.id, 0);
           if (day > 0 && !alerts.includes(`Day ${day}: Stockout at source ${source.name}.`)) {
@@ -84,7 +87,6 @@ export class SimEngine {
           return;
         }
 
-        // Check target material restriction
         if (target.allowedMaterials && target.allowedMaterials.length > 0) {
           if (!target.allowedMaterials.includes(source.materialType)) {
             requestedTransfers.set(link.id, 0);
@@ -99,33 +101,26 @@ export class SimEngine {
         requestedTransfers.set(link.id, maxFromSource);
       });
 
-      // Second pass: Target headroom, strict mode sub-rules (throttleback vs headroom_hold), and pro-rata allocation
       targetInflows.forEach((inboundLinks, targetId) => {
         const target = this.nodes.get(targetId);
         if (!target) return;
 
         const overflowMode = target.overflowMode || this.defaultOverflowMode;
         const subRule = target.strictSubRule || 'throttleback';
-        const headroomThreshold = target.headroomThreshold ?? 500; // e.g. 500 m³ spare space required
+        const headroomThreshold = target.headroomThreshold ?? 500;
 
         const currentVol = target.currentVolume;
         const capacity = target.capacity;
         const headroom = Math.max(0, capacity - currentVol);
 
-        // Check headroom hold hysteresis state
         let isHalted = this.headroomHoldStates.get(targetId) || false;
 
         if (overflowMode === 'strict' && subRule === 'headroom_hold') {
-          // If we hit capacity, trigger hold
           if (currentVol >= capacity) {
             isHalted = true;
-          } 
-          // If currently halted, remain halted until headroom clears the required threshold
-          else if (isHalted && headroom < headroomThreshold) {
-            isHalted = true; 
-          } 
-          // Once enough headroom is cleared, release the hold and resume full transfers
-          else if (isHalted && headroom >= headroomThreshold) {
+          } else if (isHalted && headroom < headroomThreshold) {
+            isHalted = true;
+          } else if (isHalted && headroom >= headroomThreshold) {
             isHalted = false;
           }
           this.headroomHoldStates.set(targetId, isHalted);
@@ -143,18 +138,16 @@ export class SimEngine {
             linkFlows[link.id] = (day === 0) ? 0 : req;
           });
         } else {
-          // Strict mode
           if (subRule === 'headroom_hold' && isHalted) {
-            // COMPLETELY HOLD ALL INBOUND TRANSFERS UNTIL HEADROOM THRESHOLD IS MET
             inboundLinks.forEach(link => {
               plannedTransfers.set(link.id, 0);
               linkFlows[link.id] = 0;
             });
             if (day > 0) {
-              const alertMsg = `Day ${day}: Target ${target.name} is full/awaiting headroom threshold (${headroomThreshold} m³ spare required). Transfers from cuts held.`;
+              const alertMsg = `Day ${day}: Target ${target.name} awaiting headroom threshold (${headroomThreshold} m³ spare required).`;
               if (!alerts.includes(alertMsg)) alerts.push(alertMsg);
             }
-          } else if (subRule === 'throttleback' || (subRule === 'headroom_hold' && !isHalted)) {
+          } else {
             const allowableHeadroom = headroom;
             const throttleFactor = totalRequestedForTarget > 0 
               ? Math.min(1.0, allowableHeadroom / totalRequestedForTarget) 
@@ -175,8 +168,6 @@ export class SimEngine {
         }
       });
 
-
-      // Apply volume updates on day > 0
       if (day > 0) {
         this.links.forEach(link => {
           const source = this.nodes.get(link.sourceId);
@@ -184,16 +175,22 @@ export class SimEngine {
           const transferAmount = plannedTransfers.get(link.id) || 0;
 
           if (source && target && transferAmount > 0) {
-            source.currentVolume = Math.max(0, source.currentVolume - transferAmount);
+            const mat = this.materials.get(source.materialType);
+            const bulkOut = mat ? mat.bulkOUT : 1.0;
+            const bulkIn = mat ? mat.bulkIN : 1.0;
+
+            const volumeRemoved = transferAmount * bulkOut;
+            source.currentVolume = Math.max(0, source.currentVolume - volumeRemoved);
+
+            const volumeAdded = transferAmount * bulkIn;
             const targetOverflowMode = target.overflowMode || this.defaultOverflowMode;
             target.currentVolume = targetOverflowMode === 'overfill' 
-              ? target.currentVolume + transferAmount 
-              : Math.min(target.capacity, target.currentVolume + transferAmount);
+              ? target.currentVolume + volumeAdded 
+              : Math.min(target.capacity, target.currentVolume + volumeAdded);
           }
         });
       }
 
-      // Record volumes and check capacity limits
       this.nodes.forEach(node => {
         nodeVolumes[node.id] = node.currentVolume;
         if (node.currentVolume > node.capacity) {
