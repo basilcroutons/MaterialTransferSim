@@ -1,0 +1,6 @@
+{
+  "name": "Material Transfer Simulator",
+  "description": "Visualise and simulate the stockpiling and movement of materials across a civil construction site.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
